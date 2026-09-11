@@ -1,0 +1,22 @@
+# Python cache and bytecode - regenerated automatically, never meaningful history
+__pycache__/
+*.pyc
+
+# Virtual environment - a local install of Python packages, not source code
+.venv/
+venv/
+
+# Secrets - API keys and credentials must never enter git history, even once.
+# A key committed and later removed is still sitting in every earlier snapshot.
+.env
+*.key
+
+# The actual database file - this will hold real personal data (CV, evidence,
+# preferences) once the curator agent starts writing to it. Data is not code;
+# it does not belong in version history, and especially not personal data.
+*.db
+*.sqlite
+*.sqlite3
+
+# macOS folder metadata
+.DS_Store
