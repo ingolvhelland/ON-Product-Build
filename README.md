@@ -52,6 +52,7 @@ python -m onbuild.brief_decision                     # record continue/revise/dr
 python -m onbuild.agents.drafting <opportunity_id> \
     [--captured-application path/to/captured.txt]    # draft application material for a continued brief
 python -m onbuild.application_decision              # record approve/revise/drop on a draft
+python -m onbuild.digest                            # batch-approve/strike byproduct evidence live since the last run
 ```
 
 `review` is the only place anything moves from `status='proposed'` to
@@ -72,3 +73,11 @@ captured what the real application page actually asks for (a PDF print, a
 pasted screen), pass it as a plain text file and the draft is shaped to
 match; without it, drafting says plainly what it doesn't know rather than
 guessing at the real form's shape.
+
+`digest` is a different kind of gate (PB-026): evidence that evaluation,
+brief-writing, or drafting proposed as a byproduct of their actual work
+(not the curator's primary intake, which always stays on `review`)
+goes live immediately, globally, the moment you accept the artifact it rode
+in on - admitting an evaluation, continuing a brief, approving a draft.
+Run `digest` whenever you want to check what that's let through;
+everything listed becomes approved unless you strike it in that same run.

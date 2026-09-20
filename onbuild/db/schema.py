@@ -20,14 +20,31 @@ DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "onbuild.db"
 # application code later, not by the database.
 
 SCHEMA = """
+-- `status`: proposed / provisional / approved / rejected. 'provisional'
+-- (PB-026) is byproduct evidence a downstream agent (evaluation, brief,
+-- drafting) surfaced while doing its actual job, promoted automatically
+-- once its parent artifact (an evaluation, brief, or application row -
+-- named by `origin_artifact_type`/`origin_opportunity_id`) is itself
+-- accepted by Ingolv - inheriting the trust that decision already implies,
+-- rather than requiring a second, separate explicit click. It is live
+-- evidence immediately (globally, not scoped to the originating
+-- opportunity - Ingolv's own call: "what the update is a byproduct of will
+-- have been explicitly approved... that is security built into it").
+-- `onbuild.digest` is the batch override window: everything 'provisional'
+-- is listed together, anything not struck there becomes 'approved' by
+-- default. Primary intake (curator-proposed, no parent artifact) never
+-- gets this status - `origin_artifact_type`/`origin_opportunity_id` stay
+-- NULL for it, and it stays on `onbuild.review`'s explicit per-item gate.
 CREATE TABLE IF NOT EXISTS evidence_nodes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     node_type TEXT NOT NULL,            -- e.g. 'claim', 'portfolio_artifact', 'gap'
     quality_tag TEXT NOT NULL,          -- direct / transferable / developing / hypothetical / absent_unknown
     description TEXT NOT NULL,
     attributes TEXT,                    -- JSON payload, fields specific to node_type
-    status TEXT NOT NULL DEFAULT 'proposed',  -- proposed / approved / rejected
+    status TEXT NOT NULL DEFAULT 'proposed',
     source TEXT,                        -- where this came from, e.g. 'curator: cv_parse 2026-09-11'
+    origin_artifact_type TEXT,          -- NULL (primary intake) | 'evaluation' | 'brief' | 'application' (PB-026)
+    origin_opportunity_id INTEGER REFERENCES opportunities(id),
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -40,6 +57,8 @@ CREATE TABLE IF NOT EXISTS evidence_edges (
     quality_tag TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'proposed',
     source TEXT,
+    origin_artifact_type TEXT,          -- see evidence_nodes above (PB-026)
+    origin_opportunity_id INTEGER REFERENCES opportunities(id),
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -242,6 +261,14 @@ _COLUMN_MIGRATIONS = {
     "briefs": [
         ("company_location_presence_id", "INTEGER"),
         ("location_presence", "TEXT"),
+    ],
+    "evidence_nodes": [
+        ("origin_artifact_type", "TEXT"),
+        ("origin_opportunity_id", "INTEGER REFERENCES opportunities(id)"),
+    ],
+    "evidence_edges": [
+        ("origin_artifact_type", "TEXT"),
+        ("origin_opportunity_id", "INTEGER REFERENCES opportunities(id)"),
     ],
 }
 

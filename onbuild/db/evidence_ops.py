@@ -29,16 +29,32 @@ def insert_evidence_node(
     description: str,
     attributes: str | None,
     source: str,
+    origin_artifact_type: str | None = None,
+    origin_opportunity_id: int | None = None,
 ) -> int:
+    """`origin_artifact_type`/`origin_opportunity_id` (PB-026) mark this as
+    byproduct evidence tied to a downstream artifact - 'evaluation' |
+    'brief' | 'application' - so it can be promoted to 'provisional' once
+    that artifact is accepted. Left NULL by the curator (primary intake,
+    no parent artifact to inherit trust from)."""
     conn = connect()
     try:
         cur = conn.execute(
             """
             INSERT INTO evidence_nodes
-                (node_type, quality_tag, description, attributes, status, source)
-            VALUES (?, ?, ?, ?, 'proposed', ?)
+                (node_type, quality_tag, description, attributes, status, source,
+                 origin_artifact_type, origin_opportunity_id)
+            VALUES (?, ?, ?, ?, 'proposed', ?, ?, ?)
             """,
-            (node_type, quality_tag, description, attributes or None, source),
+            (
+                node_type,
+                quality_tag,
+                description,
+                attributes or None,
+                source,
+                origin_artifact_type,
+                origin_opportunity_id,
+            ),
         )
         conn.commit()
         return cur.lastrowid
@@ -67,16 +83,29 @@ def insert_evidence_edge(
     edge_type: str,
     quality_tag: str,
     source: str,
+    origin_artifact_type: str | None = None,
+    origin_opportunity_id: int | None = None,
 ) -> int:
+    """See insert_evidence_node's origin_artifact_type/origin_opportunity_id
+    docstring (PB-026) - same meaning here."""
     conn = connect()
     try:
         cur = conn.execute(
             """
             INSERT INTO evidence_edges
-                (source_node_id, target_node_id, edge_type, quality_tag, status, source)
-            VALUES (?, ?, ?, ?, 'proposed', ?)
+                (source_node_id, target_node_id, edge_type, quality_tag, status, source,
+                 origin_artifact_type, origin_opportunity_id)
+            VALUES (?, ?, ?, ?, 'proposed', ?, ?, ?)
             """,
-            (source_node_id, target_node_id, edge_type, quality_tag, source),
+            (
+                source_node_id,
+                target_node_id,
+                edge_type,
+                quality_tag,
+                source,
+                origin_artifact_type,
+                origin_opportunity_id,
+            ),
         )
         conn.commit()
         return cur.lastrowid
@@ -397,6 +426,137 @@ def insert_application(
         )
         conn.commit()
         return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def promote_provisional_evidence(
+    artifact_type: str, opportunity_id: int
+) -> tuple[list[int], list[int]]:
+    """Called by the three decision CLIs (admission, brief_decision,
+    application_decision) after Ingolv records an *accepting* decision
+    (admit/continue/approve) - PB-026's inherited-trust promotion. Flips
+    every still-'proposed' node/edge whose origin matches this artifact to
+    'provisional': globally live immediately, not scoped to this
+    opportunity (Ingolv's own call), pending the batch override window
+    (`onbuild.digest`). A rejecting/revising/dropping decision must never
+    call this - byproduct evidence with no accepted parent to inherit trust
+    from stays 'proposed', on the ordinary `onbuild.review` gate."""
+    conn = connect()
+    try:
+        node_ids = [
+            row[0]
+            for row in conn.execute(
+                "SELECT id FROM evidence_nodes WHERE status='proposed' "
+                "AND origin_artifact_type=? AND origin_opportunity_id=?",
+                (artifact_type, opportunity_id),
+            ).fetchall()
+        ]
+        edge_ids = [
+            row[0]
+            for row in conn.execute(
+                "SELECT id FROM evidence_edges WHERE status='proposed' "
+                "AND origin_artifact_type=? AND origin_opportunity_id=?",
+                (artifact_type, opportunity_id),
+            ).fetchall()
+        ]
+        if node_ids:
+            conn.executemany(
+                "UPDATE evidence_nodes SET status='provisional', "
+                "updated_at=datetime('now') WHERE id=?",
+                [(nid,) for nid in node_ids],
+            )
+        if edge_ids:
+            conn.executemany(
+                "UPDATE evidence_edges SET status='provisional', "
+                "updated_at=datetime('now') WHERE id=?",
+                [(eid,) for eid in edge_ids],
+            )
+        conn.commit()
+        return node_ids, edge_ids
+    finally:
+        conn.close()
+
+
+def fetch_provisional_evidence() -> tuple[list[tuple], list[tuple]]:
+    """For `onbuild.digest` (PB-026): every node/edge currently 'provisional'
+    - live evidence, awaiting the batch override window - grouped by the
+    parent artifact it inherited trust from."""
+    conn = connect()
+    try:
+        nodes = conn.execute(
+            "SELECT id, node_type, quality_tag, description, "
+            "origin_artifact_type, origin_opportunity_id "
+            "FROM evidence_nodes WHERE status='provisional' ORDER BY id"
+        ).fetchall()
+        edges = conn.execute(
+            "SELECT id, source_node_id, target_node_id, edge_type, quality_tag, "
+            "origin_artifact_type, origin_opportunity_id "
+            "FROM evidence_edges WHERE status='provisional' ORDER BY id"
+        ).fetchall()
+        return nodes, edges
+    finally:
+        conn.close()
+
+
+def finalize_provisional_nodes(struck_ids: set[int]) -> tuple[int, int]:
+    """For `onbuild.digest`: every currently-'provisional' node becomes
+    'approved' unless its id is in `struck_ids`, in which case it becomes
+    'rejected' - silence is approval, by design (PB-026)."""
+    conn = connect()
+    try:
+        rows = conn.execute(
+            "SELECT id FROM evidence_nodes WHERE status='provisional'"
+        ).fetchall()
+        approved = rejected = 0
+        for (node_id,) in rows:
+            new_status = "rejected" if node_id in struck_ids else "approved"
+            conn.execute(
+                "UPDATE evidence_nodes SET status=?, updated_at=datetime('now') "
+                "WHERE id=?",
+                (new_status, node_id),
+            )
+            approved += new_status == "approved"
+            rejected += new_status == "rejected"
+        conn.commit()
+        return approved, rejected
+    finally:
+        conn.close()
+
+
+def finalize_provisional_edges(struck_ids: set[int]) -> tuple[int, int]:
+    """Edge counterpart of finalize_provisional_nodes - see its docstring."""
+    conn = connect()
+    try:
+        rows = conn.execute(
+            "SELECT id FROM evidence_edges WHERE status='provisional'"
+        ).fetchall()
+        approved = rejected = 0
+        for (edge_id,) in rows:
+            new_status = "rejected" if edge_id in struck_ids else "approved"
+            conn.execute(
+                "UPDATE evidence_edges SET status=?, updated_at=datetime('now') "
+                "WHERE id=?",
+                (new_status, edge_id),
+            )
+            approved += new_status == "approved"
+            rejected += new_status == "rejected"
+        conn.commit()
+        return approved, rejected
+    finally:
+        conn.close()
+
+
+def fetch_latest_application(opportunity_id: int) -> tuple | None:
+    conn = connect()
+    try:
+        return conn.execute(
+            "SELECT id, tailored_cv, cover_letter_or_message, "
+            "application_form_data, question_responses, "
+            "portfolio_recommendation, human_decision, revision_notes "
+            "FROM applications WHERE opportunity_id = ? ORDER BY id DESC LIMIT 1",
+            (opportunity_id,),
+        ).fetchone()
     finally:
         conn.close()
 

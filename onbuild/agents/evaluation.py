@@ -42,15 +42,23 @@ load_dotenv()
 
 SOURCE_TAG = "evaluation: opportunity_assessment"
 
+# Set by evaluate_opportunity() before each run, read by propose_evidence_node/
+# propose_evidence_edge's tool handlers so byproduct evidence surfaced here
+# carries the opportunity it came from (PB-026) - same module-level-slot
+# pattern as drafting.py's _CURRENT_CAPTURED_APPLICATION_TEXT, for the same
+# reason (a @tool-decorated function is looked up by name at call time, not
+# a method with access to instance state).
+_CURRENT_OPPORTUNITY_ID: int | None = None
+
 
 @tool(
     "list_evidence_graph",
     "List everything currently recorded: every evidence node (any status), "
     "every edge (any status), and every identity-core fact, each labelled "
     "with its status. Read-only. Call this once before reasoning about fit. "
-    "Only treat 'approved' items as real evidence - 'proposed' and "
-    "'rejected' items are visible but must not be treated as established "
-    "fact. Identity facts also show current/not current - a key can have "
+    "Only treat 'approved' or 'provisional' items as real evidence - "
+    "'proposed' and 'rejected' items are visible but must not be treated as "
+    "established fact. Identity facts also show current/not current - a key can have "
     "more than one approved row when a fact was revised; only the "
     "'current' one is today's fact, an older 'not current' row for the "
     "same key was superseded, not contradicted or rejected.",
@@ -80,6 +88,8 @@ async def propose_evidence_node(args: dict) -> dict:
         args["description"],
         args.get("attributes"),
         SOURCE_TAG,
+        origin_artifact_type="evaluation",
+        origin_opportunity_id=_CURRENT_OPPORTUNITY_ID,
     )
     return {
         "content": [
@@ -114,6 +124,8 @@ async def propose_evidence_edge(args: dict) -> dict:
         args["edge_type"],
         args["quality_tag"],
         SOURCE_TAG,
+        origin_artifact_type="evaluation",
+        origin_opportunity_id=_CURRENT_OPPORTUNITY_ID,
     )
     return {
         "content": [
@@ -183,8 +195,8 @@ beyond the evaluation itself.
 You will be given the opportunity's posting text, its source, and the track
 this evaluation is being made against. Call list_evidence_graph once before
 reasoning about fit. Only treat nodes, edges, and identity facts whose
-status is "approved" as real evidence - ignore anything "proposed" or
-"rejected" when assessing fit, even though you can see it.
+status is "approved" or "provisional" as real evidence - ignore anything
+"proposed" or "rejected" when assessing fit, even though you can see it.
 
 Evidence-node quality (direct/transferable/developing/hypothetical/
 absent_unknown) is a property of the node, set once. Per-requirement match
@@ -262,7 +274,9 @@ evaluation leads to an actual admission decision.
 async def evaluate_opportunity(
     opportunity_id: int, opportunity_text: str, source: str, track: str
 ) -> None:
+    global _CURRENT_OPPORTUNITY_ID
     init_db()
+    _CURRENT_OPPORTUNITY_ID = opportunity_id
     server = create_sdk_mcp_server(
         name="evaluation",
         tools=[

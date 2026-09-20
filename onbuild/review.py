@@ -15,6 +15,13 @@ Run it directly:
 
 Skipped items stay status='proposed'; re-run the tool anytime to pick up
 where you left off.
+
+Byproduct evidence an evaluation/brief/drafting agent surfaces (as opposed
+to the curator's primary intake) never reaches 'proposed' review by this
+route once its parent artifact is accepted - it goes straight to
+status='provisional' instead, live immediately, with its own override
+window at `onbuild.digest` (PB-026). It only shows up here if its parent
+artifact was rejected/revised/dropped, or hasn't been decided yet.
 """
 
 import json

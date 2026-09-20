@@ -51,13 +51,17 @@ SOURCE_TAG = "drafting: application_draft"
 # than a per-instance value.
 _CURRENT_CAPTURED_APPLICATION_TEXT: str | None = None
 
+# Same module-level-slot reasoning as above, for the opportunity id this
+# byproduct evidence should be tagged with (PB-026).
+_CURRENT_OPPORTUNITY_ID: int | None = None
+
 
 @tool(
     "list_evidence_graph",
     "List everything currently recorded: every evidence node (any status), "
     "every edge (any status), and every identity-core fact, each labelled "
-    "with its status. Read-only. Only treat 'approved' items as real "
-    "evidence. Identity facts also show current/not current - a key can "
+    "with its status. Read-only. Only treat 'approved' or 'provisional' "
+    "items as real evidence. Identity facts also show current/not current - a key can "
     "have more than one approved row when a fact was revised; only the "
     "'current' one is today's fact, an older 'not current' row for the "
     "same key was superseded, not contradicted or rejected.",
@@ -80,6 +84,8 @@ async def propose_evidence_node(args: dict) -> dict:
         args["description"],
         args.get("attributes"),
         SOURCE_TAG,
+        origin_artifact_type="application",
+        origin_opportunity_id=_CURRENT_OPPORTUNITY_ID,
     )
     return {
         "content": [
@@ -111,6 +117,8 @@ async def propose_evidence_edge(args: dict) -> dict:
         args["edge_type"],
         args["quality_tag"],
         SOURCE_TAG,
+        origin_artifact_type="application",
+        origin_opportunity_id=_CURRENT_OPPORTUNITY_ID,
     )
     return {
         "content": [
@@ -184,6 +192,13 @@ Call list_evidence_graph once. Only treat "approved" or "provisional" items
 as real evidence. Never invent, embellish, or infer facts beyond what is stated or
 directly implied by the evidence and its relationships - the same rule
 every other agent in this system follows.
+
+If you are given a prior draft and a revision note, this is a revision,
+not a fresh draft: read the note as the specific, authoritative statement
+of what is wrong, and produce a new version that actually fixes it - do
+not simply regenerate from the brief and evidence as if the note did not
+exist, and do not reintroduce the flagged content in a slightly different
+phrasing. Keep everything about the prior draft that was not flagged.
 
 Produce these fields, in this order of reasoning:
 
@@ -294,6 +309,39 @@ def _build_prompt(opportunity_id: int, captured_application_text: str | None) ->
         else "CAPTURED REAL APPLICATION CONTENT: none provided."
     )
 
+    # If the most recent draft for this opportunity was sent back for
+    # revision, surface exactly what needs to change plus the prior draft
+    # itself - without this, re-running drafting has no way to know it is
+    # a revision at all and would just regenerate blindly, likely repeating
+    # whatever was flagged. Found and fixed the same day it first mattered
+    # for real (Claimlane's cover letter), not deferred.
+    revision_block = ""
+    prior_application = evidence_ops.fetch_latest_application(opportunity_id)
+    if prior_application is not None:
+        (
+            prior_app_id,
+            prior_cv,
+            prior_cover_letter,
+            prior_form_data,
+            prior_question_responses,
+            prior_portfolio_recommendation,
+            prior_app_human_decision,
+            prior_revision_notes,
+        ) = prior_application
+        if prior_app_human_decision == "revise":
+            revision_block = (
+                f"\n\nTHIS IS A REVISION of draft #{prior_app_id}, sent back "
+                f"with the following note - address it specifically, do not "
+                f"silently reintroduce what it flags:\n"
+                f"REVISION NOTE: {prior_revision_notes or '(no note given)'}\n\n"
+                f"PRIOR DRAFT being revised:\n"
+                f"Tailored CV:\n{prior_cv}\n\n"
+                f"Cover letter / message:\n{prior_cover_letter}\n\n"
+                f"Application form data:\n{prior_form_data}\n\n"
+                f"Question responses:\n{prior_question_responses or '(none)'}\n\n"
+                f"Portfolio recommendation:\n{prior_portfolio_recommendation}"
+            )
+
     prompt = (
         f"OPPORTUNITY #{opp_id}\n"
         f"Title: {title}\n"
@@ -309,6 +357,7 @@ def _build_prompt(opportunity_id: int, captured_application_text: str | None) ->
         f"Candidacy fit: {candidacy_fit_summary}\n\n"
         f"Strategic approach: {strategic_approach}\n\n"
         f"{captured_block}"
+        f"{revision_block}"
     )
     return prompt, brief_id
 
@@ -316,10 +365,11 @@ def _build_prompt(opportunity_id: int, captured_application_text: str | None) ->
 async def write_application(
     opportunity_id: int, captured_application_text: str | None = None
 ) -> None:
-    global _CURRENT_CAPTURED_APPLICATION_TEXT
+    global _CURRENT_CAPTURED_APPLICATION_TEXT, _CURRENT_OPPORTUNITY_ID
     init_db()
     prompt, brief_id = _build_prompt(opportunity_id, captured_application_text)
     _CURRENT_CAPTURED_APPLICATION_TEXT = captured_application_text
+    _CURRENT_OPPORTUNITY_ID = opportunity_id
 
     server = create_sdk_mcp_server(
         name="drafting",

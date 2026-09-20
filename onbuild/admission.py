@@ -28,6 +28,7 @@ anytime to continue.
 
 import sqlite3
 
+from onbuild.db import evidence_ops
 from onbuild.db.schema import DB_PATH
 
 
@@ -111,6 +112,20 @@ def main() -> None:
                 )
                 conn.commit()
                 admitted += 1
+                # PB-026: admitting this evaluation is the accepting decision
+                # that lets any byproduct evidence it surfaced inherit trust
+                # and go live as 'provisional', pending onbuild.digest.
+                promoted_nodes, promoted_edges = (
+                    evidence_ops.promote_provisional_evidence(
+                        "evaluation", opp_id
+                    )
+                )
+                if promoted_nodes or promoted_edges:
+                    print(
+                        f"  -> promoted {len(promoted_nodes)} evidence node(s) "
+                        f"and {len(promoted_edges)} edge(s) to 'provisional' "
+                        f"(live now; onbuild.digest is the override window)."
+                    )
             elif choice == "r":
                 conn.execute(
                     "UPDATE evaluations SET human_decision='reject', "

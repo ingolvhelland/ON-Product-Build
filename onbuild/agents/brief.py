@@ -42,6 +42,10 @@ load_dotenv()
 
 SOURCE_TAG = "brief: opportunity_brief"
 
+# Set by write_brief() before each run - see evaluation.py's identical
+# _CURRENT_OPPORTUNITY_ID for why this is a module-level slot (PB-026).
+_CURRENT_OPPORTUNITY_ID: int | None = None
+
 
 @tool(
     "lookup_company_knowledge",
@@ -179,8 +183,8 @@ async def save_company_field_position(args: dict) -> dict:
     "list_evidence_graph",
     "List everything currently recorded: every evidence node (any status), "
     "every edge (any status), and every identity-core fact, each labelled "
-    "with its status. Read-only. Only treat 'approved' items as real "
-    "evidence. Identity facts also show current/not current - a key can "
+    "with its status. Read-only. Only treat 'approved' or 'provisional' "
+    "items as real evidence. Identity facts also show current/not current - a key can "
     "have more than one approved row when a fact was revised; only the "
     "'current' one is today's fact, an older 'not current' row for the "
     "same key was superseded, not contradicted or rejected.",
@@ -203,6 +207,8 @@ async def propose_evidence_node(args: dict) -> dict:
         args["description"],
         args.get("attributes"),
         SOURCE_TAG,
+        origin_artifact_type="brief",
+        origin_opportunity_id=_CURRENT_OPPORTUNITY_ID,
     )
     return {
         "content": [
@@ -233,6 +239,8 @@ async def propose_evidence_edge(args: dict) -> dict:
         args["edge_type"],
         args["quality_tag"],
         SOURCE_TAG,
+        origin_artifact_type="brief",
+        origin_opportunity_id=_CURRENT_OPPORTUNITY_ID,
     )
     return {
         "content": [
@@ -417,7 +425,9 @@ def _build_prompt(opportunity_id: int) -> str:
 
 
 async def write_brief(opportunity_id: int) -> None:
+    global _CURRENT_OPPORTUNITY_ID
     init_db()
+    _CURRENT_OPPORTUNITY_ID = opportunity_id
     prompt = _build_prompt(opportunity_id)
 
     server = create_sdk_mcp_server(
