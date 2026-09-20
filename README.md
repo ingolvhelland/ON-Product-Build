@@ -65,6 +65,9 @@ python -m onbuild.submission_confirmation           # confirm an approved draft 
 python -m onbuild.mailbox                           # scan the job-search inbox for new mail, match, and classify
 python -m onbuild.agents.outcome <opportunity_id> path/to/message.txt  # classify one message manually (no live match found, or testing)
 python -m onbuild.outcome_decision                  # record confirm/recategorize/ignore on a classification
+python -m onbuild.register_external_application \    # register an application sent outside this system
+    --title "..." --organisation "..." [--posting-file f.txt] [--sent-file f.txt]
+python -m onbuild.resolve_unmatched <unmatched_id> <opportunity_id>  # classify an already-captured unmatched message
 python -m onbuild.digest                            # batch-approve/strike byproduct evidence live since the last run
 ```
 
@@ -125,3 +128,13 @@ tracks its own progress in the database and only ever looks at mail newer
 than what it already processed. Runs a single pass each time you call it;
 wiring it to run on a recurring schedule is a separate choice, not made
 here.
+
+`register_external_application` (PB-031) is for an opportunity that was
+drafted and sent entirely outside this system - it creates the
+opportunity plus the minimal placeholder brief/application rows the
+schema still requires, and marks it `submitted_pending_outcome`
+immediately, since in real life it already is. `resolve_unmatched` closes
+the loop when `mailbox` already captured a message before the opportunity
+it belongs to existed: pass the unmatched message's id and the now-known
+opportunity id, and it classifies that message directly without needing
+`mailbox` to re-fetch anything live.

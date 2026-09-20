@@ -547,6 +547,88 @@ def finalize_provisional_edges(struck_ids: set[int]) -> tuple[int, int]:
         conn.close()
 
 
+def insert_external_application(
+    title: str,
+    organisation: str,
+    raw_text: str,
+    track: str | None,
+    sent_content_note: str,
+    source: str,
+) -> tuple[int, int, int]:
+    """Registers an opportunity that was evaluated, drafted, and submitted
+    entirely outside this system (PB-031) - creates the opportunity plus
+    the minimal placeholder brief/application rows the schema still
+    requires (applications.brief_id is NOT NULL), and marks it submitted
+    immediately, since in real life it already was. Returns
+    (opportunity_id, brief_id, application_id)."""
+    conn = connect()
+    try:
+        cur = conn.execute(
+            "INSERT INTO opportunities "
+            "(title, organisation, raw_text, source, track, lifecycle_status) "
+            "VALUES (?, ?, ?, ?, ?, 'submitted_pending_outcome')",
+            (title, organisation, raw_text, source, track),
+        )
+        opportunity_id = cur.lastrowid
+
+        placeholder = "N/A - application drafted and sent outside this system, no brief written"
+        cur = conn.execute(
+            "INSERT INTO briefs "
+            "(opportunity_id, company_profile, field_positioning, position_fit, "
+            "candidacy_fit_summary, strategic_approach, human_decision, source) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'continue', ?)",
+            (opportunity_id, placeholder, placeholder, placeholder, placeholder, placeholder, source),
+        )
+        brief_id = cur.lastrowid
+
+        cur = conn.execute(
+            "INSERT INTO applications "
+            "(opportunity_id, brief_id, application_format_assessment, tailored_cv, "
+            "cover_letter_or_message, application_form_data, portfolio_recommendation, "
+            "human_decision, submitted_at, source) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 'approve', datetime('now'), ?)",
+            (
+                opportunity_id,
+                brief_id,
+                "External application - drafted and sent outside this system.",
+                sent_content_note,
+                sent_content_note,
+                "N/A - external application",
+                "N/A - external application",
+                source,
+            ),
+        )
+        application_id = cur.lastrowid
+        conn.commit()
+        return opportunity_id, brief_id, application_id
+    finally:
+        conn.close()
+
+
+def fetch_unmatched_message(unmatched_id: int) -> tuple | None:
+    conn = connect()
+    try:
+        return conn.execute(
+            "SELECT id, uid, sender, subject, message_text, status "
+            "FROM unmatched_mailbox_messages WHERE id = ?",
+            (unmatched_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def resolve_unmatched_message(unmatched_id: int) -> None:
+    conn = connect()
+    try:
+        conn.execute(
+            "UPDATE unmatched_mailbox_messages SET status='resolved' WHERE id=?",
+            (unmatched_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def fetch_mailbox_last_uid() -> int:
     conn = connect()
     try:
