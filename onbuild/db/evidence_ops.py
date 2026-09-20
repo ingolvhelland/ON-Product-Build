@@ -547,6 +547,55 @@ def finalize_provisional_edges(struck_ids: set[int]) -> tuple[int, int]:
         conn.close()
 
 
+def fetch_opportunity_lifecycle_status(opportunity_id: int) -> str | None:
+    conn = connect()
+    try:
+        row = conn.execute(
+            "SELECT lifecycle_status FROM opportunities WHERE id = ?",
+            (opportunity_id,),
+        ).fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def insert_outcome(
+    application_id: int,
+    opportunity_id: int,
+    captured_message_text: str,
+    submission_confirmed: bool | None,
+    category: str,
+    rationale: str,
+    suggested_next_step: str | None,
+    source: str,
+) -> int:
+    conn = connect()
+    try:
+        cur = conn.execute(
+            """
+            INSERT INTO outcomes
+                (application_id, opportunity_id, captured_message_text,
+                 submission_confirmed, category, rationale,
+                 suggested_next_step, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                application_id,
+                opportunity_id,
+                captured_message_text,
+                None if submission_confirmed is None else int(submission_confirmed),
+                category,
+                rationale,
+                suggested_next_step,
+                source,
+            ),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
 def fetch_latest_application(opportunity_id: int) -> tuple | None:
     conn = connect()
     try:

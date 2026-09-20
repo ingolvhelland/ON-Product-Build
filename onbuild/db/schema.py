@@ -84,6 +84,17 @@ CREATE TABLE IF NOT EXISTS identity_core (
 -- evaluation agent design names a track's positioning profile as a real
 -- input; until that table exists, the track is just recorded alongside the
 -- opportunity rather than looked up from persisted state).
+-- `lifecycle_status` (PB-029) is the first real state field for where an
+-- opportunity actually sits post-submission - NULL until Ingolv confirms a
+-- draft was actually sent (`onbuild.submission_confirmation`, a fact-only
+-- gate: did I actually click submit, not a content judgment), then one of
+-- 'submitted_pending_outcome' | 'awaiting_action' | 'rejected' | 'interview'
+-- - set only by that gate and by `onbuild.outcome_decision`, never by the
+-- outcome agent directly (PB-022/PB-027: "never mutates pipeline state
+-- directly"). Earlier lifecycle states (candidate/evaluated/admitted/
+-- selected/brief-approved/drafted) still aren't modeled here - named gap,
+-- PB-022 - this only covers the post-submission tail the outcome agent
+-- actually needs to update.
 CREATE TABLE IF NOT EXISTS opportunities (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
@@ -91,6 +102,7 @@ CREATE TABLE IF NOT EXISTS opportunities (
     raw_text TEXT NOT NULL,             -- the posting text, as captured
     source TEXT,                        -- where/how this was captured
     track TEXT,
+    lifecycle_status TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -242,9 +254,38 @@ CREATE TABLE IF NOT EXISTS applications (
     revision_notes TEXT,
     decided_at TEXT,
     source TEXT,
+    submitted_at TEXT,                  -- set by onbuild.submission_confirmation (PB-029)
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- The outcome agent's output for one captured message about a submitted
+-- application (PB-029). Written directly, like evaluations/briefs/drafts -
+-- a classification, not evidence about Ingolv; the real human gate is the
+-- separate decision recorded afterward by `onbuild.outcome_decision`.
+-- `captured_message_text` is required, not nullable like drafting's
+-- captured-application slot - this agent has nothing to classify without a
+-- real message, unlike drafting, which can still produce a generic CV/
+-- cover letter from the posting and brief alone. Mailbox-access mechanism
+-- deliberately not built (PB-027's boundary, same reasoning as PB-025's
+-- deferred application-portal browser automation): a message is captured
+-- and handed to this agent as a plain text file, not read live from a
+-- real inbox.
+CREATE TABLE IF NOT EXISTS outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    application_id INTEGER NOT NULL REFERENCES applications(id),
+    opportunity_id INTEGER NOT NULL REFERENCES opportunities(id),
+    captured_message_text TEXT NOT NULL,
+    submission_confirmed INTEGER,       -- 1/0/NULL - does this message itself confirm receipt
+    category TEXT NOT NULL,             -- 'receipt_confirmation' | 'interview' | 'rejection' | 'further_info' | 'other_request' | 'unclear'
+    rationale TEXT NOT NULL,
+    suggested_next_step TEXT,
+    human_decision TEXT,                -- 'confirm' | 'recategorize' | 'ignore'
+    decided_category TEXT,              -- filled only when human_decision='recategorize'
+    revision_notes TEXT,
+    decided_at TEXT,
+    source TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -269,6 +310,12 @@ _COLUMN_MIGRATIONS = {
     "evidence_edges": [
         ("origin_artifact_type", "TEXT"),
         ("origin_opportunity_id", "INTEGER REFERENCES opportunities(id)"),
+    ],
+    "opportunities": [
+        ("lifecycle_status", "TEXT"),
+    ],
+    "applications": [
+        ("submitted_at", "TEXT"),
     ],
 }
 

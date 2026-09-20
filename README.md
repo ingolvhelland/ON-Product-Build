@@ -8,25 +8,29 @@ that design actually gets built; it is not where decisions get made.
 
 ## Current state
 
-Four of the pipeline's agents are built and have run against real
+Five of the pipeline's agents are built and have run against real
 opportunities: curator (evidence intake), evaluation (fit assessment),
-brief-writing (company/field/location research and strategy), and drafting
-(application material). Every human decision gate - review, admission,
-brief, application - is a plain command-line tool with no AI in it. See
-`PRODUCT_BUILD_LOG.md` entries PB-009 through PB-025 for the reasoning
-behind this scope and how each stage was judged.
+brief-writing (company/field/location research and strategy), drafting
+(application material), and outcome (classifying a captured post-submission
+message). Every human decision gate - review, admission, brief,
+application, submission confirmation, outcome - is a plain command-line
+tool with no AI in it. See `PRODUCT_BUILD_LOG.md` entries PB-009 through
+PB-029 for the reasoning behind this scope and how each stage was judged.
 
 Known gaps, not yet acted on: the evidence graph is incomplete relative to
 Ingolv's full background (more source material still needs to go through
 the curator, deliberately, as real evaluation use reveals it's needed);
 there is no track positioning as a persisted, versioned table (PB-008/
 PB-019) - track is a plain string for now; no ranked-list view or
-selection lifecycle state (PB-022); no email/outcome agent; no
-application-portal browser automation (PB-025 - real application content
-is manually captured for now, deliberately, given the safety stakes of an
-agent that could click things on a live application system); no learning
-loop yet feeds later-discovered application-stage information back into
-evaluation calibration.
+selection lifecycle state (PB-022); no application-portal browser
+automation (PB-025) or live mailbox access (PB-027/PB-029) - real
+application content and post-submission messages are manually captured
+for now, deliberately, given the safety stakes of an agent that could
+click things on a live application system or read a real inbox; no
+learning loop yet feeds later-discovered application-stage information
+back into evaluation calibration; no interview-preparation agent yet
+(PB-027 - named and placed, triggered once the outcome agent classifies a
+message as an interview invitation, but not built).
 
 ## Setup
 
@@ -52,6 +56,9 @@ python -m onbuild.brief_decision                     # record continue/revise/dr
 python -m onbuild.agents.drafting <opportunity_id> \
     [--captured-application path/to/captured.txt]    # draft application material for a continued brief
 python -m onbuild.application_decision              # record approve/revise/drop on a draft
+python -m onbuild.submission_confirmation           # confirm an approved draft was actually sent
+python -m onbuild.agents.outcome <opportunity_id> path/to/message.txt  # classify a captured post-submission message
+python -m onbuild.outcome_decision                  # record confirm/recategorize/ignore on a classification
 python -m onbuild.digest                            # batch-approve/strike byproduct evidence live since the last run
 ```
 
@@ -81,3 +88,18 @@ goes live immediately, globally, the moment you accept the artifact it rode
 in on - admitting an evaluation, continuing a brief, approving a draft.
 Run `digest` whenever you want to check what that's let through;
 everything listed becomes approved unless you strike it in that same run.
+
+`submission_confirmation` is a fact-only gate, not a content judgment
+(PB-029): approving a draft means it's good enough to send, not that it
+has been sent. Confirming it here sets `applications.submitted_at` and
+moves the opportunity's `lifecycle_status` to `submitted_pending_outcome` -
+required before `outcome` will run for that opportunity.
+
+`outcome` classifies one captured message about an already-submitted
+opportunity into one of six categories - receipt_confirmation, interview,
+rejection, further_info, other_request, unclear - never mutating pipeline
+state itself. `outcome_decision` is the human gate that actually moves
+`lifecycle_status` (to `interview`, `rejected`, or `awaiting_action`,
+depending on the confirmed category) - `confirm` accepts the agent's read,
+`recategorize` overrides it, `ignore` treats the message as not
+decision-relevant at all.
