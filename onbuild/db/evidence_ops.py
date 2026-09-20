@@ -547,6 +547,69 @@ def finalize_provisional_edges(struck_ids: set[int]) -> tuple[int, int]:
         conn.close()
 
 
+def fetch_mailbox_last_uid() -> int:
+    conn = connect()
+    try:
+        row = conn.execute(
+            "SELECT last_processed_uid FROM mailbox_state WHERE id = 1"
+        ).fetchone()
+        return row[0] if row else 0
+    finally:
+        conn.close()
+
+
+def update_mailbox_last_uid(uid: int) -> None:
+    conn = connect()
+    try:
+        conn.execute(
+            "INSERT INTO mailbox_state (id, last_processed_uid, updated_at) "
+            "VALUES (1, ?, datetime('now')) "
+            "ON CONFLICT(id) DO UPDATE SET last_processed_uid=excluded.last_processed_uid, "
+            "updated_at=datetime('now')",
+            (uid,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def fetch_opportunities_awaiting_outcome() -> list[tuple]:
+    """Candidates onbuild.mailbox can match a live message against - only
+    opportunities actually awaiting a reply (PB-030)."""
+    conn = connect()
+    try:
+        return conn.execute(
+            "SELECT id, title, organisation FROM opportunities "
+            "WHERE lifecycle_status IN ('submitted_pending_outcome', 'awaiting_action')"
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def insert_unmatched_message(
+    uid: int,
+    sender: str | None,
+    subject: str | None,
+    message_text: str,
+    candidate_opportunity_ids: str,
+    received_at: str | None,
+) -> int:
+    conn = connect()
+    try:
+        cur = conn.execute(
+            """
+            INSERT INTO unmatched_mailbox_messages
+                (uid, sender, subject, message_text, candidate_opportunity_ids, received_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (uid, sender, subject, message_text, candidate_opportunity_ids, received_at),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
 def fetch_opportunity_lifecycle_status(opportunity_id: int) -> str | None:
     conn = connect()
     try:

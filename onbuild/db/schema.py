@@ -270,6 +270,38 @@ CREATE TABLE IF NOT EXISTS applications (
 -- deferred application-portal browser automation): a message is captured
 -- and handed to this agent as a plain text file, not read live from a
 -- real inbox.
+-- Live-mailbox watermark (PB-030) - a singleton row tracking the highest
+-- IMAP UID already processed, so `onbuild.mailbox` never reprocesses a
+-- message. Not IMAP's own Seen flag: the mailbox is opened strictly
+-- read-only and fetched via BODY.PEEK, so nothing is ever marked read on
+-- the live account itself - the database is the only place progress is
+-- tracked, per the Toolkit invariant (PB-007) that the database is the
+-- sole source of truth.
+CREATE TABLE IF NOT EXISTS mailbox_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    last_processed_uid INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- A live-fetched message that onbuild.mailbox could not confidently match
+-- to exactly one opportunity awaiting outcome (zero or multiple candidate
+-- matches) - held here rather than silently dropped or guessed at (PB-004's
+-- "nothing captured is ever silently dropped" discipline, applied to live
+-- mail the same way it already applies to discovery capture). Resolved
+-- manually for now: reviewed directly, then re-run through
+-- `onbuild.agents.outcome` by hand once the right opportunity is known.
+CREATE TABLE IF NOT EXISTS unmatched_mailbox_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    uid INTEGER NOT NULL,
+    sender TEXT,
+    subject TEXT,
+    message_text TEXT NOT NULL,
+    candidate_opportunity_ids TEXT,     -- JSON list - empty if zero candidates, >1 if ambiguous
+    status TEXT NOT NULL DEFAULT 'unresolved',  -- 'unresolved' | 'resolved'
+    received_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS outcomes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     application_id INTEGER NOT NULL REFERENCES applications(id),
