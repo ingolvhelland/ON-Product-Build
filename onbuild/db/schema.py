@@ -85,16 +85,20 @@ CREATE TABLE IF NOT EXISTS identity_core (
 -- input; until that table exists, the track is just recorded alongside the
 -- opportunity rather than looked up from persisted state).
 -- `lifecycle_status` (PB-029) is the first real state field for where an
--- opportunity actually sits post-submission - NULL until Ingolv confirms a
--- draft was actually sent (`onbuild.submission_confirmation`, a fact-only
--- gate: did I actually click submit, not a content judgment), then one of
--- 'submitted_pending_outcome' | 'awaiting_action' | 'rejected' | 'interview'
--- - set only by that gate and by `onbuild.outcome_decision`, never by the
--- outcome agent directly (PB-022/PB-027: "never mutates pipeline state
--- directly"). Earlier lifecycle states (candidate/evaluated/admitted/
--- selected/brief-approved/drafted) still aren't modeled here - named gap,
--- PB-022 - this only covers the post-submission tail the outcome agent
--- actually needs to update.
+-- opportunity actually sits - NULL while still active/tracked and not yet
+-- submitted, then either 'closed' (PB-032 - its deadline passed with
+-- nothing sent, set automatically and deterministically by
+-- `evidence_ops.close_expired_opportunities()`, reversible by
+-- `onbuild.relist_opportunity` if the posting reappears) or, once Ingolv
+-- confirms a draft was actually sent (`onbuild.submission_confirmation`, a
+-- fact-only gate: did I actually click submit, not a content judgment),
+-- one of 'submitted_pending_outcome' | 'awaiting_action' | 'rejected' |
+-- 'interview' - set only by that gate and by `onbuild.outcome_decision`,
+-- never by the outcome agent directly (PB-022/PB-027: "never mutates
+-- pipeline state directly"). Earlier lifecycle states (candidate/
+-- evaluated/admitted/selected/brief-approved/drafted) still aren't
+-- modeled here - named gap, PB-022 - this only covers the states the
+-- outcome agent and deadline tracking actually need to update.
 CREATE TABLE IF NOT EXISTS opportunities (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
@@ -103,6 +107,7 @@ CREATE TABLE IF NOT EXISTS opportunities (
     source TEXT,                        -- where/how this was captured
     track TEXT,
     lifecycle_status TEXT,
+    application_deadline TEXT,          -- ISO date (PB-032); NULL if not stated or not yet captured
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -345,6 +350,7 @@ _COLUMN_MIGRATIONS = {
     ],
     "opportunities": [
         ("lifecycle_status", "TEXT"),
+        ("application_deadline", "TEXT"),
     ],
     "applications": [
         ("submitted_at", "TEXT"),

@@ -322,12 +322,18 @@ def main() -> None:
     parser.add_argument("--organisation", default=None)
     parser.add_argument("--source", default="manual entry")
     parser.add_argument("--track", required=True)
+    parser.add_argument(
+        "--deadline",
+        default=None,
+        help="Application deadline, ISO date (YYYY-MM-DD) - PB-032. Omit if the "
+        "posting doesn't state one.",
+    )
     args = parser.parse_args()
 
     init_db()
     raw_text = args.path.read_text()
     opportunity_id = evidence_ops.insert_opportunity(
-        args.title, args.organisation, raw_text, args.source, args.track
+        args.title, args.organisation, raw_text, args.source, args.track, args.deadline
     )
     print(f"Opportunity #{opportunity_id} added.")
 

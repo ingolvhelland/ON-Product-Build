@@ -119,18 +119,93 @@ def insert_opportunity(
     raw_text: str,
     source: str | None,
     track: str | None,
+    application_deadline: str | None = None,
 ) -> int:
     conn = connect()
     try:
         cur = conn.execute(
             """
-            INSERT INTO opportunities (title, organisation, raw_text, source, track)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO opportunities (title, organisation, raw_text, source, track, application_deadline)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (title, organisation, raw_text, source, track),
+            (title, organisation, raw_text, source, track, application_deadline),
         )
         conn.commit()
         return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def close_expired_opportunities() -> list[int]:
+    """Deterministic, not a judgment - a deadline having passed with
+    nothing submitted is a plain fact, so this runs automatically as a
+    side effect of `onbuild.overview` rather than needing its own gate
+    (PB-032). Only ever touches opportunities still `lifecycle_status IS
+    NULL` (active, not yet submitted, not already closed) - never
+    overrides a real outcome or an in-progress submission."""
+    conn = connect()
+    try:
+        ids = [
+            row[0]
+            for row in conn.execute(
+                "SELECT id FROM opportunities WHERE lifecycle_status IS NULL "
+                "AND application_deadline IS NOT NULL "
+                "AND application_deadline < date('now')"
+            ).fetchall()
+        ]
+        if ids:
+            conn.executemany(
+                "UPDATE opportunities SET lifecycle_status='closed' WHERE id=?",
+                [(i,) for i in ids],
+            )
+            conn.commit()
+        return ids
+    finally:
+        conn.close()
+
+
+def relist_opportunity(opportunity_id: int, new_deadline: str) -> None:
+    """A posting reappearing with a new deadline reopens a 'closed'
+    opportunity - a fact update, same reasoning as
+    `close_expired_opportunities` (PB-032)."""
+    conn = connect()
+    try:
+        conn.execute(
+            "UPDATE opportunities SET application_deadline=?, "
+            "lifecycle_status=CASE WHEN lifecycle_status='closed' THEN NULL "
+            "ELSE lifecycle_status END WHERE id=?",
+            (new_deadline, opportunity_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def fetch_overview() -> list[tuple]:
+    """The admitted-opportunities ranked list PB-022 named and never
+    built, now including deadline urgency (PB-032). Only opportunities
+    with a real admit decision, still active or awaiting outcome (not
+    closed, not rejected) - sorted so an approaching deadline always
+    surfaces first, then by fit_score."""
+    conn = connect()
+    try:
+        return conn.execute(
+            """
+            SELECT o.id, o.title, o.organisation, o.lifecycle_status,
+                   o.application_deadline, e.fit_score, e.fit_tier
+            FROM opportunities o
+            JOIN evaluations e ON e.id = (
+                SELECT MAX(id) FROM evaluations WHERE opportunity_id = o.id
+            )
+            WHERE e.human_decision = 'admit'
+              AND (o.lifecycle_status IS NULL
+                   OR o.lifecycle_status IN ('submitted_pending_outcome', 'awaiting_action'))
+            ORDER BY
+                CASE WHEN o.application_deadline IS NULL THEN 1 ELSE 0 END,
+                o.application_deadline ASC,
+                e.fit_score DESC
+            """
+        ).fetchall()
     finally:
         conn.close()
 

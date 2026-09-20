@@ -16,15 +16,15 @@ message, fed either by a live, read-only scan of the dedicated job-search
 mailbox or a manually captured file). Every human decision gate - review,
 admission, brief, application, submission confirmation, outcome - is a
 plain command-line tool with no AI in it. See `PRODUCT_BUILD_LOG.md`
-entries PB-009 through PB-030 for the reasoning behind this scope and how
+entries PB-009 through PB-032 for the reasoning behind this scope and how
 each stage was judged.
 
 Known gaps, not yet acted on: the evidence graph is incomplete relative to
 Ingolv's full background (more source material still needs to go through
 the curator, deliberately, as real evaluation use reveals it's needed);
 there is no track positioning as a persisted, versioned table (PB-008/
-PB-019) - track is a plain string for now; no ranked-list view or
-selection lifecycle state (PB-022); no application-portal browser
+PB-019) - track is a plain string for now; no selection lifecycle state
+(PB-022); no application-portal browser
 automation (PB-025) or mailbox-access automation (PB-027/PB-029) - real
 application content and post-submission messages are manually captured
 for now, deliberately, given the safety stakes of an agent that could
@@ -54,7 +54,7 @@ python -m onbuild.agents.curator path/to/some.txt   # propose evidence from raw 
 python -m onbuild.review                            # approve/reject what was proposed
 python -m onbuild.agents.baseline_cv --out cv.txt    # generate the baseline CV from approved evidence
 python -m onbuild.agents.evaluation path/to/posting.txt \
-    --title "..." --organisation "..." --track "Primary"  # evaluate one opportunity
+    --title "..." --organisation "..." --track "Primary" [--deadline YYYY-MM-DD]  # evaluate one opportunity
 python -m onbuild.admission                          # record admit/reject on evaluated opportunities
 python -m onbuild.agents.brief <opportunity_id>       # write a strategic brief for an admitted opportunity
 python -m onbuild.brief_decision                     # record continue/revise/drop on a brief
@@ -68,6 +68,8 @@ python -m onbuild.outcome_decision                  # record confirm/recategoriz
 python -m onbuild.register_external_application \    # register an application sent outside this system
     --title "..." --organisation "..." [--posting-file f.txt] [--sent-file f.txt]
 python -m onbuild.resolve_unmatched <unmatched_id> <opportunity_id>  # classify an already-captured unmatched message
+python -m onbuild.overview                          # ranked list of admitted, active/awaiting-outcome opportunities
+python -m onbuild.relist_opportunity <opportunity_id> <new_deadline>  # reopen a closed opportunity with a new deadline
 python -m onbuild.digest                            # batch-approve/strike byproduct evidence live since the last run
 ```
 
@@ -138,3 +140,10 @@ the loop when `mailbox` already captured a message before the opportunity
 it belongs to existed: pass the unmatched message's id and the now-known
 opportunity id, and it classifies that message directly without needing
 `mailbox` to re-fetch anything live.
+
+`overview` (PB-032) is the ranked admitted-opportunities list - it runs an
+automatic, deterministic check first (any active opportunity whose
+`--deadline` has passed with nothing submitted gets `lifecycle_status`
+set to `closed`), then prints what's left, soonest deadline first, then
+by `fit_score`. `relist_opportunity` reopens a `closed` opportunity with a
+new deadline if the posting reappears.
