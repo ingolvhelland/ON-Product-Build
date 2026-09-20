@@ -57,7 +57,193 @@ CREATE TABLE IF NOT EXISTS identity_core (
     source TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- One opportunity being considered. `track` names which track positioning
+-- this is evaluated against (PB-004's saddle component 4, "Primary/BigTech/
+-- PhD" style) as plain text for now - track positioning does not yet exist
+-- as its own versioned table, so this is a known simplification (PB-009's
+-- evaluation agent design names a track's positioning profile as a real
+-- input; until that table exists, the track is just recorded alongside the
+-- opportunity rather than looked up from persisted state).
+CREATE TABLE IF NOT EXISTS opportunities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    organisation TEXT,
+    raw_text TEXT NOT NULL,             -- the posting text, as captured
+    source TEXT,                        -- where/how this was captured
+    track TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- The evaluation agent's output for one opportunity (PB-009). Written
+-- directly, not through propose/approve - an evaluation is a recommendation,
+-- not evidence about the person, so there is nothing to "approve" about the
+-- text itself. The actual human gate for this stage is `human_decision`,
+-- recorded separately by Ingolv after reading the evaluation (PB-002): the
+-- gap between `suggested_action` and `human_decision` across many
+-- evaluations is the agreement-rate calibration data PB-002 was designed to
+-- build toward eventual admission automation.
+--
+-- `fit_score` and `fit_tier` (PB-019) are additions, not a replacement for
+-- keeping fields separate (PB-009, against ON's own DL-003 lesson): they
+-- exist only so admitted opportunities can be sorted and skimmed on a
+-- pending-application list, not to collapse or stand in for the reasoning
+-- in the other fields. `fit_tier` in particular makes a genuine grey-zone
+-- case - real substantive fit alongside serious gaps - visible as its own
+-- category rather than forcing a binary admit/reject read.
+CREATE TABLE IF NOT EXISTS evaluations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    opportunity_id INTEGER NOT NULL REFERENCES opportunities(id),
+    fit_summary TEXT NOT NULL,
+    distinctiveness TEXT NOT NULL,
+    gates_summary TEXT NOT NULL,
+    countercase TEXT NOT NULL,          -- required even when fit looks strong (PB-009)
+    requirement_matches TEXT NOT NULL,  -- JSON: [{requirement, match_quality, rationale, evidence_node_ids}]
+    gaps_summary TEXT,
+    fit_score INTEGER,                  -- 1-10, ranking aid only - not the verdict (PB-019)
+    fit_tier TEXT,                      -- 'strong_match' | 'stretch' | 'mismatch' (PB-019)
+    suggested_action TEXT NOT NULL,     -- 'admit' | 'reject' | 'flag' (PB-009)
+    human_decision TEXT,                -- Ingolv's actual decision, filled in later
+    decided_at TEXT,
+    source TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Persistent company knowledge (PB-023). Researched once, reused across
+-- every opportunity at the same company from then on - the point Ingolv
+-- named directly: "in time, the system will build knowledge of companies
+-- and relevant fields, that will help in making assessments for
+-- unsolicited opportunities." Written directly by the brief-writing agent,
+-- not through propose/approve (Ingolv's own call): getting a company's
+-- public positioning wrong is lower-stakes than misrepresenting Ingolv's
+-- own evidence, and it is self-correcting - the agent re-researches and
+-- updates it rather than needing a human review cycle first.
+CREATE TABLE IF NOT EXISTS companies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    general_profile TEXT,               -- researched independently of any one opportunity
+    source TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- A company's positioning within one field (e.g. "AI transformation",
+-- "biomedical engineering") - also researched independently of any one
+-- opportunity, so the read isn't anchored to what a specific posting
+-- claims about itself. `quality_tag` distinguishes direct evidence (e.g. a
+-- published AI strategy) from a reasoned inference when no direct evidence
+-- exists - Ingolv: "if there is no direct evidence this can also be
+-- inferred." One company can have positions in more than one field.
+CREATE TABLE IF NOT EXISTS company_field_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL REFERENCES companies(id),
+    field TEXT NOT NULL,
+    positioning TEXT NOT NULL,
+    quality_tag TEXT NOT NULL,          -- 'direct' | 'inferred'
+    source TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- A company's presence at one location (e.g. "Copenhagen, Denmark") - the
+-- same reasoning as field positions, for a different dimension: a
+-- multinational's footprint varies by location as much as by field
+-- (Ingolv: "IBM in Denmark is not necessarily the same as in Mongolia or
+-- the US"). Also researched independently of any one opportunity. One
+-- company can have presence rows at more than one location.
+CREATE TABLE IF NOT EXISTS company_location_presence (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL REFERENCES companies(id),
+    location TEXT NOT NULL,
+    presence TEXT NOT NULL,
+    quality_tag TEXT NOT NULL,          -- 'direct' | 'inferred'
+    source TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- The brief-writing agent's output for one opportunity (PB-023). Written
+-- directly, like evaluations - a brief is a strategic document, not
+-- evidence about Ingolv. `company_profile`/`location_presence`/
+-- `field_positioning` are stored as snapshots of what was actually used
+-- when the brief was written, even though the underlying `companies`/
+-- `company_location_presence`/`company_field_positions` rows may be
+-- refreshed later - the brief should always show the reasoning that led to
+-- it, not silently inherit a later update. The `_id` columns keep the
+-- traceable link to that source. `human_decision` is the three-way brief
+-- gate Ingolv specified (PB-022) - not binary approve/reject.
+CREATE TABLE IF NOT EXISTS briefs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    opportunity_id INTEGER NOT NULL REFERENCES opportunities(id),
+    company_id INTEGER REFERENCES companies(id),
+    company_location_presence_id INTEGER REFERENCES company_location_presence(id),
+    company_field_position_id INTEGER REFERENCES company_field_positions(id),
+    company_profile TEXT NOT NULL,
+    location_presence TEXT,
+    field_positioning TEXT NOT NULL,
+    position_fit TEXT NOT NULL,
+    candidacy_fit_summary TEXT NOT NULL,
+    strategic_approach TEXT NOT NULL,
+    human_decision TEXT,                -- 'continue' | 'revise' | 'drop'
+    revision_notes TEXT,
+    decided_at TEXT,
+    source TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- The drafting agent's output for one opportunity (PB-025). Only ever runs
+-- against a brief whose human_decision is 'continue' - application code
+-- enforces this, not the schema. Written directly, like evaluations and
+-- briefs - a draft is generated content, not evidence about Ingolv.
+--
+-- `captured_application_text` holds whatever was manually captured from the
+-- real application (a printed-to-PDF page, pasted text) - real application
+-- portals routinely ask for things a job posting never mentions (a
+-- "message to the hiring team" instead of a cover letter, per-role
+-- description boxes, specific questions), and reviewing that real page is a
+-- genuine judgment moment for Ingolv, not something to automate away
+-- (PB-025). Nullable - a draft can still be produced from the posting and
+-- brief alone when nothing was captured, with `application_format_assessment`
+-- saying plainly what's unknown as a result. This same input slot is where
+-- a future automated "probe the application" capability would plug in
+-- later, without changing anything else - PB-025's "build room for it, gate
+-- its activation" boundary.
+CREATE TABLE IF NOT EXISTS applications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    opportunity_id INTEGER NOT NULL REFERENCES opportunities(id),
+    brief_id INTEGER NOT NULL REFERENCES briefs(id),
+    captured_application_text TEXT,
+    application_format_assessment TEXT NOT NULL,
+    tailored_cv TEXT NOT NULL,
+    cover_letter_or_message TEXT NOT NULL,
+    application_form_data TEXT NOT NULL,
+    question_responses TEXT,
+    portfolio_recommendation TEXT NOT NULL,
+    human_decision TEXT,                -- 'approve' | 'revise' | 'drop'
+    revision_notes TEXT,
+    decided_at TEXT,
+    source TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 """
+
+
+# Columns added to an existing table after it was first created elsewhere.
+# CREATE TABLE IF NOT EXISTS won't add these to a database that already has
+# the table (e.g. `evaluations` before PB-019), so init_db adds any missing
+# ones explicitly. Append here, never remove - the same append-only
+# discipline as everything else in this schema.
+_COLUMN_MIGRATIONS = {
+    "evaluations": [
+        ("fit_score", "INTEGER"),
+        ("fit_tier", "TEXT"),
+    ],
+    "briefs": [
+        ("company_location_presence_id", "INTEGER"),
+        ("location_presence", "TEXT"),
+    ],
+}
 
 
 def init_db(db_path: Path = DB_PATH) -> None:
@@ -66,6 +252,15 @@ def init_db(db_path: Path = DB_PATH) -> None:
     conn = sqlite3.connect(db_path)
     try:
         conn.executescript(SCHEMA)
+        for table, columns in _COLUMN_MIGRATIONS.items():
+            existing = {
+                row[1] for row in conn.execute(f"PRAGMA table_info({table})")
+            }
+            for column, col_type in columns:
+                if column not in existing:
+                    conn.execute(
+                        f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"
+                    )
         conn.commit()
     finally:
         conn.close()
