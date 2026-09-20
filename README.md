@@ -19,12 +19,20 @@ plain command-line tool with no AI in it. See `PRODUCT_BUILD_LOG.md`
 entries PB-009 through PB-032 for the reasoning behind this scope and how
 each stage was judged.
 
+No interface exists yet, deliberately (see Log PB-034): a web dashboard
+was built and then removed the same day, on the judgment that interface
+design should wait until the underlying system is finished and be derived
+from where a human actually needs to touch it and what it needs to feed
+back, not adopted as a generic pattern mid-build. `onbuild.overview` is
+the plain-text version of the same ranked-list view, in the same CLI
+style as everything else here.
+
 Known gaps, not yet acted on: the evidence graph is incomplete relative to
 Ingolv's full background (more source material still needs to go through
 the curator, deliberately, as real evaluation use reveals it's needed);
 there is no track positioning as a persisted, versioned table (PB-008/
 PB-019) - track is a plain string for now; no selection lifecycle state
-(PB-022); no application-portal browser
+(PB-022); no interface of any kind (PB-034); no application-portal browser
 automation (PB-025) or mailbox-access automation (PB-027/PB-029) - real
 application content and post-submission messages are manually captured
 for now, deliberately, given the safety stakes of an agent that could
