@@ -307,6 +307,33 @@ CREATE TABLE IF NOT EXISTS unmatched_mailbox_messages (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- The interview-preparation agent's output for one opportunity (PB-035,
+-- resolving PB-027's placement). Written directly, like evaluations/
+-- briefs/drafts/outcomes - a strategy document, not evidence about
+-- Ingolv. Pulls the brief as its starting point (not re-derived from
+-- scratch, same discipline PB-023 established for brief-on-evaluation)
+-- plus whatever the actual submitted application said, plus the real
+-- interview-invitation message for who the interview is actually
+-- scheduled with. `interviewer_research` and `office_leadership_research`
+-- are kept separate because they answer different questions - who
+-- Ingolv will actually be speaking with, versus who runs the office the
+-- role sits in, which may or may not be the same person.
+CREATE TABLE IF NOT EXISTS interview_preps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    opportunity_id INTEGER NOT NULL REFERENCES opportunities(id),
+    brief_id INTEGER NOT NULL REFERENCES briefs(id),
+    outcome_id INTEGER REFERENCES outcomes(id),
+    interviewer_research TEXT NOT NULL,
+    office_leadership_research TEXT NOT NULL,
+    talking_points TEXT NOT NULL,
+    requirement_coverage TEXT NOT NULL,  -- JSON: [{requirement, coverage: 'direct'|'indirect'|'none', evidence_node_ids, note}]
+    human_decision TEXT,                -- 'approve' | 'revise' | 'drop'
+    revision_notes TEXT,
+    decided_at TEXT,
+    source TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS outcomes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     application_id INTEGER NOT NULL REFERENCES applications(id),

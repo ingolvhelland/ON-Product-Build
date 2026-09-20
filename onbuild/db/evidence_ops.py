@@ -704,6 +704,61 @@ def resolve_unmatched_message(unmatched_id: int) -> None:
         conn.close()
 
 
+def fetch_confirmed_interview_outcome(opportunity_id: int) -> tuple | None:
+    """The most recent outcome for this opportunity that was actually
+    decided (confirm or recategorize) into 'interview' - the real
+    invitation message the interview-preparation agent reads for who the
+    interview is scheduled with (PB-035)."""
+    conn = connect()
+    try:
+        return conn.execute(
+            "SELECT id, application_id, captured_message_text "
+            "FROM outcomes WHERE opportunity_id = ? "
+            "AND human_decision IN ('confirm', 'recategorize') "
+            "AND decided_category = 'interview' "
+            "ORDER BY id DESC LIMIT 1",
+            (opportunity_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def insert_interview_prep(
+    opportunity_id: int,
+    brief_id: int,
+    outcome_id: int | None,
+    interviewer_research: str,
+    office_leadership_research: str,
+    talking_points: str,
+    requirement_coverage: str,
+    source: str,
+) -> int:
+    conn = connect()
+    try:
+        cur = conn.execute(
+            """
+            INSERT INTO interview_preps
+                (opportunity_id, brief_id, outcome_id, interviewer_research,
+                 office_leadership_research, talking_points, requirement_coverage, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                opportunity_id,
+                brief_id,
+                outcome_id,
+                interviewer_research,
+                office_leadership_research,
+                talking_points,
+                requirement_coverage,
+                source,
+            ),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
 def fetch_mailbox_last_uid() -> int:
     conn = connect()
     try:

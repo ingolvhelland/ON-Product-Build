@@ -8,15 +8,20 @@ that design actually gets built; it is not where decisions get made.
 
 ## Current state
 
-Five of the pipeline's agents are built and have run against real
-opportunities: curator (evidence intake), evaluation (fit assessment),
+Six of the pipeline's agents are built: curator (evidence intake),
+evaluation (fit assessment),
 brief-writing (company/field/location research and strategy), drafting
-(application material), and outcome (classifying a post-submission
-message, fed either by a live, read-only scan of the dedicated job-search
-mailbox or a manually captured file). Every human decision gate - review,
-admission, brief, application, submission confirmation, outcome - is a
+(application material), outcome (classifying a post-submission message,
+fed either by a live, read-only scan of the dedicated job-search mailbox
+or a manually captured file), and interview-prep (researching who the
+interview is actually with, 5-7 evidence-grounded talking points, and
+requirement-by-requirement coverage) - all but interview-prep have run
+against real opportunities; interview-prep is verified but not yet
+exercised for real, since no real opportunity has reached the interview
+stage yet. Every human decision gate - review, admission, brief,
+application, submission confirmation, outcome, interview-prep - is a
 plain command-line tool with no AI in it. See `PRODUCT_BUILD_LOG.md`
-entries PB-009 through PB-032 for the reasoning behind this scope and how
+entries PB-009 through PB-035 for the reasoning behind this scope and how
 each stage was judged.
 
 No interface exists yet, deliberately (see Log PB-034): a web dashboard
@@ -40,10 +45,7 @@ click things on a live application system or read a real inbox; no
 recurring schedule for the live mailbox scan (PB-030 - it runs a single
 pass on demand today; unattended scheduling is a standing-configuration
 choice not yet made); no learning loop yet feeds later-discovered
-application-stage information back into evaluation calibration; no
-interview-preparation agent yet (PB-027 - named and placed, triggered once
-the outcome agent classifies a message as an interview invitation, but not
-built).
+application-stage information back into evaluation calibration.
 
 ## Setup
 
@@ -73,6 +75,8 @@ python -m onbuild.submission_confirmation           # confirm an approved draft 
 python -m onbuild.mailbox                           # scan the job-search inbox for new mail, match, and classify
 python -m onbuild.agents.outcome <opportunity_id> path/to/message.txt  # classify one message manually (no live match found, or testing)
 python -m onbuild.outcome_decision                  # record confirm/recategorize/ignore on a classification
+python -m onbuild.agents.interview_prep <opportunity_id>  # research and strategy for an opportunity at the interview stage
+python -m onbuild.interview_prep_decision           # record approve/revise/drop on an interview prep
 python -m onbuild.register_external_application \    # register an application sent outside this system
     --title "..." --organisation "..." [--posting-file f.txt] [--sent-file f.txt]
 python -m onbuild.resolve_unmatched <unmatched_id> <opportunity_id>  # classify an already-captured unmatched message
@@ -148,6 +152,19 @@ the loop when `mailbox` already captured a message before the opportunity
 it belongs to existed: pass the unmatched message's id and the now-known
 opportunity id, and it classifies that message directly without needing
 `mailbox` to re-fetch anything live.
+
+`agents.interview_prep` (PB-035) only runs once `outcome_decision` has
+confirmed an interview invitation for an opportunity
+(`lifecycle_status='interview'`) and its brief is `continue`. It reads the
+real interview-invitation message directly to identify who the interview
+is actually scheduled with and researches them, separately researches who
+runs the office the position sits in (named people, not the brief's own
+company-location presence research), then produces 5-7 evidence-grounded
+talking points consistent with what was actually submitted and a
+requirement-by-requirement coverage list building on the evaluation's own
+`requirement_matches`. The third agent with real web access, after
+brief-writing. `interview_prep_decision` is the same three-way gate as
+brief and application.
 
 `overview` (PB-032) is the ranked admitted-opportunities list - it runs an
 automatic, deterministic check first (any active opportunity whose
