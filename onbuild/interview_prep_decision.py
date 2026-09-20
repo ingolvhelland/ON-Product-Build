@@ -1,10 +1,12 @@
 """
 Interview-prep-decision CLI - the human gate over the interview-preparation
-agent's output (PB-022, PB-027, PB-035).
+agent's output (PB-022, PB-027, PB-035, PB-036).
 
-Same three-way shape as the brief and application gates: the strategy can
-be good enough to walk into the interview with, need real rework, or
-reveal something that changes the plan entirely.
+Same four-way shape as the brief and application gates: approve, revise,
+pause, or drop. 'pause' means "I haven't decided yet, on purpose" - a
+paused item keeps reappearing here on every future run, sorted by the
+opportunity's own application_deadline (soonest first), the same
+reasoning `onbuild.overview` sorts by deadline urgency (PB-032).
 
 Only the most recent interview prep per opportunity is presented. No AI
 involved, same as every other gate in this system.
@@ -13,7 +15,7 @@ PB-026's byproduct-evidence promotion only fires on 'approve' - the same
 reasoning as every other gate: a 'revise' means Ingolv found something
 wrong with this agent's research or strategy, so anything it surfaced
 alongside that work stays on the ordinary onbuild.review gate rather than
-inheriting trust.
+inheriting trust; 'pause' and 'drop' grant nothing for the same reason.
 
 Run it directly:
 
@@ -37,26 +39,30 @@ def _connect() -> sqlite3.Connection:
 def _prompt() -> str:
     while True:
         choice = (
-            input("[a]pprove / [r]evise / [d]rop / [s]kip / [q]uit > ")
+            input("[a]pprove / [r]evise / [p]ause / [d]rop / [s]kip / [q]uit > ")
             .strip()
             .lower()
         )
-        if choice in ("a", "r", "d", "s", "q"):
+        if choice in ("a", "r", "p", "d", "s", "q"):
             return choice
-        print("Please enter a, r, d, s, or q.")
+        print("Please enter a, r, p, d, s, or q.")
 
 
 def pending_decisions(conn: sqlite3.Connection) -> list[tuple]:
     return conn.execute(
         """
         SELECT ip.id, ip.opportunity_id, o.title, o.organisation,
-               ip.interviewer_research, ip.office_leadership_research,
-               ip.talking_points, ip.requirement_coverage
+               o.application_deadline, ip.interviewer_research,
+               ip.office_leadership_research, ip.talking_points,
+               ip.requirement_coverage, ip.human_decision
         FROM interview_preps ip
         JOIN opportunities o ON o.id = ip.opportunity_id
         WHERE ip.id IN (SELECT MAX(id) FROM interview_preps GROUP BY opportunity_id)
-          AND ip.human_decision IS NULL
-        ORDER BY ip.id
+          AND (ip.human_decision IS NULL OR ip.human_decision = 'pause')
+        ORDER BY
+            CASE WHEN o.application_deadline IS NULL THEN 1 ELSE 0 END,
+            o.application_deadline ASC,
+            ip.id
         """
     ).fetchall()
 
@@ -69,18 +75,25 @@ def main() -> None:
             print("No pending interview-prep decisions.")
             return
 
-        approved = revised = dropped = skipped = 0
+        approved = revised = paused = dropped = skipped = 0
         for (
             prep_id,
             opp_id,
             title,
             organisation,
+            application_deadline,
             interviewer_research,
             office_leadership_research,
             talking_points,
             requirement_coverage,
+            prior_decision,
         ) in rows:
-            print(f"\n=== Opportunity #{opp_id}: {title} — {organisation or '(no organisation)'} ===")
+            paused_tag = " [PAUSED - revisit]" if prior_decision == "pause" else ""
+            deadline_tag = f" | deadline: {application_deadline}" if application_deadline else ""
+            print(
+                f"\n=== Opportunity #{opp_id}: {title} — "
+                f"{organisation or '(no organisation)'}{deadline_tag}{paused_tag} ==="
+            )
             print(f"Interview prep #{prep_id}")
             print(f"\nInterviewer research:\n{interviewer_research}")
             print(f"\nOffice leadership research:\n{office_leadership_research}")
@@ -118,6 +131,15 @@ def main() -> None:
                 )
                 conn.commit()
                 revised += 1
+            elif choice == "p":
+                note = input("Note (optional, why pausing): ").strip()
+                conn.execute(
+                    "UPDATE interview_preps SET human_decision='pause', "
+                    "revision_notes=?, decided_at=datetime('now') WHERE id=?",
+                    (note or None, prep_id),
+                )
+                conn.commit()
+                paused += 1
             elif choice == "d":
                 conn.execute(
                     "UPDATE interview_preps SET human_decision='drop', "
@@ -131,7 +153,7 @@ def main() -> None:
 
         print(
             f"\n=== Summary ===\n"
-            f"Approve: {approved}\nRevise: {revised}\n"
+            f"Approve: {approved}\nRevise: {revised}\nPause: {paused}\n"
             f"Drop: {dropped}\nSkipped: {skipped}"
         )
         print(

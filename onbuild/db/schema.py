@@ -220,7 +220,7 @@ CREATE TABLE IF NOT EXISTS briefs (
     position_fit TEXT NOT NULL,
     candidacy_fit_summary TEXT NOT NULL,
     strategic_approach TEXT NOT NULL,
-    human_decision TEXT,                -- 'continue' | 'revise' | 'drop'
+    human_decision TEXT,                -- 'continue' | 'revise' | 'pause' | 'drop' (PB-036)
     revision_notes TEXT,
     decided_at TEXT,
     source TEXT,
@@ -255,7 +255,7 @@ CREATE TABLE IF NOT EXISTS applications (
     application_form_data TEXT NOT NULL,
     question_responses TEXT,
     portfolio_recommendation TEXT NOT NULL,
-    human_decision TEXT,                -- 'approve' | 'revise' | 'drop'
+    human_decision TEXT,                -- 'approve' | 'revise' | 'pause' | 'drop' (PB-036)
     revision_notes TEXT,
     decided_at TEXT,
     source TEXT,
@@ -327,7 +327,7 @@ CREATE TABLE IF NOT EXISTS interview_preps (
     office_leadership_research TEXT NOT NULL,
     talking_points TEXT NOT NULL,
     requirement_coverage TEXT NOT NULL,  -- JSON: [{requirement, coverage: 'direct'|'indirect'|'none', evidence_node_ids, note}]
-    human_decision TEXT,                -- 'approve' | 'revise' | 'drop'
+    human_decision TEXT,                -- 'approve' | 'revise' | 'pause' | 'drop' (PB-036)
     revision_notes TEXT,
     decided_at TEXT,
     source TEXT,

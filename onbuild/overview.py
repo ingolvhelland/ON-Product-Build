@@ -1,10 +1,10 @@
 """
 Overview CLI (PB-032) - the admitted-opportunities ranked list PB-022
-named and never built, extended with deadline urgency. Terminal-only for
-now: this system has been deliberately CLI-first with no running server
-(PB-001/PB-003's "3 + 4" execution shape - on-demand work, no always-on
-application server) and a real navigation-page interface is a bigger,
-separate decision, not made here (see PRODUCT_BUILD_LOG.md PB-032).
+named and never built, extended with deadline urgency and, since PB-036,
+a "pending" flag when a brief, application, or interview prep is sitting
+paused for that opportunity - the same foregrounding purpose as the
+deadline sort: a paused decision with a real deadline attached shouldn't
+need to be remembered.
 
 Runs `evidence_ops.close_expired_opportunities()` first - deterministic,
 not a judgment (a deadline having passed with nothing submitted is a
@@ -33,16 +33,30 @@ def main() -> None:
         return
 
     today = date.today().isoformat()
-    print(f"{'#':<4} {'Title':<40} {'Org':<20} {'Status':<24} {'Deadline':<12} {'Score':<6} {'Tier'}")
-    print("-" * 120)
-    for opp_id, title, organisation, lifecycle_status, deadline, fit_score, fit_tier in rows:
+    print(f"{'#':<4} {'Title':<38} {'Org':<18} {'Status':<24} {'Deadline':<12} {'Score':<6} {'Tier':<14} {'Pending'}")
+    print("-" * 140)
+    for (
+        opp_id, title, organisation, lifecycle_status, deadline, fit_score, fit_tier,
+        latest_brief_decision, latest_application_decision, latest_interview_prep_decision,
+    ) in rows:
         status = lifecycle_status or "active"
         deadline_display = deadline or "-"
         if deadline and deadline >= today:
             deadline_display = f"{deadline} !"
+
+        paused_gates = []
+        if latest_brief_decision == "pause":
+            paused_gates.append("brief")
+        if latest_application_decision == "pause":
+            paused_gates.append("application")
+        if latest_interview_prep_decision == "pause":
+            paused_gates.append("interview_prep")
+        pending_display = f"PAUSED: {', '.join(paused_gates)}" if paused_gates else "-"
+
         print(
-            f"{opp_id:<4} {title[:38]:<40} {(organisation or '')[:18]:<20} "
-            f"{status:<24} {deadline_display:<12} {fit_score or '-':<6} {fit_tier or '-'}"
+            f"{opp_id:<4} {title[:36]:<38} {(organisation or '')[:16]:<18} "
+            f"{status:<24} {deadline_display:<12} {fit_score or '-':<6} "
+            f"{(fit_tier or '-'):<14} {pending_display}"
         )
 
 

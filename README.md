@@ -9,20 +9,19 @@ that design actually gets built; it is not where decisions get made.
 ## Current state
 
 Six of the pipeline's agents are built: curator (evidence intake),
-evaluation (fit assessment),
-brief-writing (company/field/location research and strategy), drafting
-(application material), outcome (classifying a post-submission message,
-fed either by a live, read-only scan of the dedicated job-search mailbox
-or a manually captured file), and interview-prep (researching who the
-interview is actually with, 5-7 evidence-grounded talking points, and
-requirement-by-requirement coverage) - all but interview-prep have run
-against real opportunities; interview-prep is verified but not yet
-exercised for real, since no real opportunity has reached the interview
-stage yet. Every human decision gate - review, admission, brief,
-application, submission confirmation, outcome, interview-prep - is a
-plain command-line tool with no AI in it. See `PRODUCT_BUILD_LOG.md`
-entries PB-009 through PB-035 for the reasoning behind this scope and how
-each stage was judged.
+evaluation (fit assessment), brief-writing (company/field/location
+research and strategy), drafting (application material), outcome
+(classifying a post-submission message, fed either by a live, read-only
+scan of the dedicated job-search mailbox or a manually captured file),
+and interview-prep (researching who the interview is actually with,
+5-7 evidence-grounded talking points, and requirement-by-requirement
+coverage) - all but interview-prep have run against real opportunities;
+interview-prep is verified but not yet exercised for real, since no real
+opportunity has reached the interview stage yet. Every human decision
+gate - review, admission, brief, application, submission confirmation,
+outcome, interview-prep - is a plain command-line tool with no AI in it.
+See `PRODUCT_BUILD_LOG.md` entries PB-009 through PB-035 for the
+reasoning behind this scope and how each stage was judged.
 
 No interface exists yet, deliberately (see Log PB-034): a web dashboard
 was built and then removed the same day, on the judgment that interface
@@ -38,10 +37,9 @@ the curator, deliberately, as real evaluation use reveals it's needed);
 there is no track positioning as a persisted, versioned table (PB-008/
 PB-019) - track is a plain string for now; no selection lifecycle state
 (PB-022); no interface of any kind (PB-034); no application-portal browser
-automation (PB-025) or mailbox-access automation (PB-027/PB-029) - real
-application content and post-submission messages are manually captured
-for now, deliberately, given the safety stakes of an agent that could
-click things on a live application system or read a real inbox; no
+automation (PB-025 - deliberately not extended to live application
+systems the way mailbox access was, given the different safety stakes of
+an agent that could click something on a live application system); no
 recurring schedule for the live mailbox scan (PB-030 - it runs a single
 pass on demand today; unattended scheduling is a standing-configuration
 choice not yet made); no learning loop yet feeds later-discovered
@@ -67,16 +65,16 @@ python -m onbuild.agents.evaluation path/to/posting.txt \
     --title "..." --organisation "..." --track "Primary" [--deadline YYYY-MM-DD]  # evaluate one opportunity
 python -m onbuild.admission                          # record admit/reject on evaluated opportunities
 python -m onbuild.agents.brief <opportunity_id>       # write a strategic brief for an admitted opportunity
-python -m onbuild.brief_decision                     # record continue/revise/drop on a brief
+python -m onbuild.brief_decision                     # record continue/revise/pause/drop on a brief
 python -m onbuild.agents.drafting <opportunity_id> \
     [--captured-application path/to/captured.txt]    # draft application material for a continued brief
-python -m onbuild.application_decision              # record approve/revise/drop on a draft
+python -m onbuild.application_decision              # record approve/revise/pause/drop on a draft
 python -m onbuild.submission_confirmation           # confirm an approved draft was actually sent
 python -m onbuild.mailbox                           # scan the job-search inbox for new mail, match, and classify
 python -m onbuild.agents.outcome <opportunity_id> path/to/message.txt  # classify one message manually (no live match found, or testing)
 python -m onbuild.outcome_decision                  # record confirm/recategorize/ignore on a classification
 python -m onbuild.agents.interview_prep <opportunity_id>  # research and strategy for an opportunity at the interview stage
-python -m onbuild.interview_prep_decision           # record approve/revise/drop on an interview prep
+python -m onbuild.interview_prep_decision           # record approve/revise/pause/drop on an interview prep
 python -m onbuild.register_external_application \    # register an application sent outside this system
     --title "..." --organisation "..." [--posting-file f.txt] [--sent-file f.txt]
 python -m onbuild.resolve_unmatched <unmatched_id> <opportunity_id>  # classify an already-captured unmatched message
@@ -98,6 +96,15 @@ most recent record per opportunity and records your actual decision
 alongside the agent's own suggested action; the gap between the two, over
 time, is the calibration data PB-002 was designed to build toward.
 
+`brief_decision`, `application_decision`, and `interview_prep_decision`
+share a fourth option beyond approve/revise/drop: `pause` (PB-036) -
+"this is genuinely good, I'm just not deciding yet." A paused item isn't
+lost: it reappears the next time you run the same tool, sorted by the
+opportunity's own deadline (soonest first) so a paused decision with a
+real deadline coming up surfaces on its own, with the same four options
+available again. `onbuild.overview` also flags which opportunities have
+something paused, in the same table that already shows deadline urgency.
+
 `drafting`'s `--captured-application` flag is optional: if you've manually
 captured what the real application page actually asks for (a PDF print, a
 pasted screen), pass it as a plain text file and the draft is shaped to
@@ -105,12 +112,13 @@ match; without it, drafting says plainly what it doesn't know rather than
 guessing at the real form's shape.
 
 `digest` is a different kind of gate (PB-026): evidence that evaluation,
-brief-writing, or drafting proposed as a byproduct of their actual work
-(not the curator's primary intake, which always stays on `review`)
+brief-writing, drafting, or outcome proposed as a byproduct of their actual
+work (not the curator's primary intake, which always stays on `review`)
 goes live immediately, globally, the moment you accept the artifact it rode
-in on - admitting an evaluation, continuing a brief, approving a draft.
-Run `digest` whenever you want to check what that's let through;
-everything listed becomes approved unless you strike it in that same run.
+in on - admitting an evaluation, continuing a brief, approving a draft,
+confirming an outcome classification. Run `digest` whenever you want to
+check what that's let through; everything listed becomes approved unless
+you strike it in that same run.
 
 `submission_confirmation` is a fact-only gate, not a content judgment
 (PB-029): approving a draft means it's good enough to send, not that it
@@ -118,10 +126,10 @@ has been sent. Confirming it here sets `applications.submitted_at` and
 moves the opportunity's `lifecycle_status` to `submitted_pending_outcome` -
 required before `outcome` will run for that opportunity.
 
-`outcome` classifies one captured message about an already-submitted
-opportunity into one of six categories - receipt_confirmation, interview,
-rejection, further_info, other_request, unclear - never mutating pipeline
-state itself. `outcome_decision` is the human gate that actually moves
+`outcome` classifies one message about an already-submitted opportunity
+into one of six categories - receipt_confirmation, interview, rejection,
+further_info, other_request, unclear - never mutating pipeline state
+itself. `outcome_decision` is the human gate that actually moves
 `lifecycle_status` (to `interview`, `rejected`, or `awaiting_action`,
 depending on the confirmed category) - `confirm` accepts the agent's read,
 `recategorize` overrides it, `ignore` treats the message as not
@@ -143,15 +151,12 @@ than what it already processed. Runs a single pass each time you call it;
 wiring it to run on a recurring schedule is a separate choice, not made
 here.
 
-`register_external_application` (PB-031) is for an opportunity that was
-drafted and sent entirely outside this system - it creates the
-opportunity plus the minimal placeholder brief/application rows the
-schema still requires, and marks it `submitted_pending_outcome`
-immediately, since in real life it already is. `resolve_unmatched` closes
-the loop when `mailbox` already captured a message before the opportunity
-it belongs to existed: pass the unmatched message's id and the now-known
-opportunity id, and it classifies that message directly without needing
-`mailbox` to re-fetch anything live.
+`overview` (PB-032) is the ranked admitted-opportunities list - it runs an
+automatic, deterministic check first (any active opportunity whose
+`--deadline` has passed with nothing submitted gets `lifecycle_status`
+set to `closed`), then prints what's left, soonest deadline first, then
+by `fit_score`. `relist_opportunity` reopens a `closed` opportunity with a
+new deadline if the posting reappears.
 
 `agents.interview_prep` (PB-035) only runs once `outcome_decision` has
 confirmed an interview invitation for an opportunity
@@ -163,12 +168,15 @@ company-location presence research), then produces 5-7 evidence-grounded
 talking points consistent with what was actually submitted and a
 requirement-by-requirement coverage list building on the evaluation's own
 `requirement_matches`. The third agent with real web access, after
-brief-writing. `interview_prep_decision` is the same three-way gate as
-brief and application.
+brief-writing. `interview_prep_decision` is the same four-way gate
+(approve/revise/pause/drop) as brief and application.
 
-`overview` (PB-032) is the ranked admitted-opportunities list - it runs an
-automatic, deterministic check first (any active opportunity whose
-`--deadline` has passed with nothing submitted gets `lifecycle_status`
-set to `closed`), then prints what's left, soonest deadline first, then
-by `fit_score`. `relist_opportunity` reopens a `closed` opportunity with a
-new deadline if the posting reappears.
+`register_external_application` (PB-031) is for an opportunity that was
+drafted and sent entirely outside this system - it creates the
+opportunity plus the minimal placeholder brief/application rows the
+schema still requires, and marks it `submitted_pending_outcome`
+immediately, since in real life it already is. `resolve_unmatched` closes
+the loop when `mailbox` already captured a message before the opportunity
+it belongs to existed: pass the unmatched message's id and the now-known
+opportunity id, and it classifies that message directly without needing
+`mailbox` to re-fetch anything live.

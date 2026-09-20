@@ -183,7 +183,10 @@ def relist_opportunity(opportunity_id: int, new_deadline: str) -> None:
 
 def fetch_overview() -> list[tuple]:
     """The admitted-opportunities ranked list PB-022 named and never
-    built, now including deadline urgency (PB-032). Only opportunities
+    built, now including deadline urgency (PB-032) and paused-decision
+    visibility (PB-036) - a paused brief/application/interview-prep is
+    exactly the thing that should surface here rather than being
+    forgotten, especially with a deadline attached. Only opportunities
     with a real admit decision, still active or awaiting outcome (not
     closed, not rejected) - sorted so an approaching deadline always
     surfaces first, then by fit_score."""
@@ -192,7 +195,13 @@ def fetch_overview() -> list[tuple]:
         return conn.execute(
             """
             SELECT o.id, o.title, o.organisation, o.lifecycle_status,
-                   o.application_deadline, e.fit_score, e.fit_tier
+                   o.application_deadline, e.fit_score, e.fit_tier,
+                   (SELECT human_decision FROM briefs
+                    WHERE opportunity_id = o.id ORDER BY id DESC LIMIT 1) AS latest_brief_decision,
+                   (SELECT human_decision FROM applications
+                    WHERE opportunity_id = o.id ORDER BY id DESC LIMIT 1) AS latest_application_decision,
+                   (SELECT human_decision FROM interview_preps
+                    WHERE opportunity_id = o.id ORDER BY id DESC LIMIT 1) AS latest_interview_prep_decision
             FROM opportunities o
             JOIN evaluations e ON e.id = (
                 SELECT MAX(id) FROM evaluations WHERE opportunity_id = o.id
