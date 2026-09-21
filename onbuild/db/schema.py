@@ -101,13 +101,25 @@ CREATE TABLE IF NOT EXISTS identity_core (
 -- 'interview' - set only by that gate and by `onbuild.outcome_decision`,
 -- never by the outcome agent directly (PB-022/PB-027: "never mutates
 -- pipeline state directly"). Earlier lifecycle states (candidate/
--- evaluated/admitted/selected/brief-approved/drafted) still aren't
--- modeled here - named gap, PB-022 - this only covers the states the
--- outcome agent and deadline tracking actually need to update.
+-- evaluated/admitted/brief-approved/drafted) still aren't modeled as
+-- `lifecycle_status` values - named gap, PB-022 - this only covers the
+-- states the outcome agent and deadline tracking actually need to
+-- update; `onbuild.pipeline` (PB-038) derives those earlier states by
+-- reading the evaluation/brief/application rows directly instead.
 -- `lifecycle_note` (PB-037) is free-text context for whatever the current
 -- status actually is - most useful for 'on_hold', where the reason is
 -- external and easy to forget (e.g. "contacted employer 2026-09-21,
 -- portal still not open despite the posting reappearing").
+-- `selected_at` (PB-039) is the one earlier state that IS modeled as its
+-- own column rather than left to the registry to derive, because it's a
+-- real fact-only gate, not a passively inferable state: the ranked list
+-- of admitted opportunities (`onbuild.overview`) is where Ingolv decides
+-- which ones to actually invest effort in right now, distinct from
+-- admission itself (which only says "not a bad fit," not "pursuing
+-- today"). NULL until `onbuild.selection` records the choice; deliberately
+-- not folded into `lifecycle_status`, since selection doesn't remove an
+-- opportunity from deadline enforcement or from `onbuild.overview` the
+-- way 'closed'/'on_hold' do - it coexists with `lifecycle_status IS NULL`.
 CREATE TABLE IF NOT EXISTS opportunities (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
@@ -118,6 +130,7 @@ CREATE TABLE IF NOT EXISTS opportunities (
     lifecycle_status TEXT,
     application_deadline TEXT,          -- ISO date (PB-032); NULL if not stated or not yet captured
     lifecycle_note TEXT,
+    selected_at TEXT,                   -- ISO datetime (PB-039); NULL until chosen from the admitted-ranked list
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -389,6 +402,7 @@ _COLUMN_MIGRATIONS = {
         ("lifecycle_status", "TEXT"),
         ("application_deadline", "TEXT"),
         ("lifecycle_note", "TEXT"),
+        ("selected_at", "TEXT"),
     ],
     "applications": [
         ("submitted_at", "TEXT"),

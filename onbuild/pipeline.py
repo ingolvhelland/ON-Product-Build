@@ -13,12 +13,10 @@ precondition check stays exactly as it is (defense in depth, PB-038) -
 this is a second, centralized layer, not a replacement.
 
 Deliberately describes today's actually-enforced behavior, not the
-target design ahead of it being built. In particular: 'selected' does
-not appear as a stage here yet, because brief-writing does not yet
-require it - that is a named, deliberate near-term change (PB-038), not
-built yet. Update this module in step with whatever it is describing,
-never ahead of it - otherwise this becomes exactly the kind of silent
-drift between the Anchor and the code it exists to catch.
+target design ahead of it being built. Update this module in step with
+whatever it is describing, never ahead of it - otherwise this becomes
+exactly the kind of silent drift between the Anchor and the code it
+exists to catch.
 """
 
 from dataclasses import dataclass
@@ -34,6 +32,7 @@ class OpportunitySnapshot:
     organisation: str | None
     lifecycle_status: str | None
     lifecycle_note: str | None
+    selected_at: str | None
     evaluation_id: int | None
     evaluation_decision: str | None
     brief_id: int | None
@@ -62,7 +61,7 @@ def _fetch_snapshot(opportunity_id: int) -> OpportunitySnapshot:
     opp_id, title, organisation, _raw_text, _source, _track = opportunity
 
     all_opps = {row[0]: row for row in evidence_ops.fetch_all_opportunities()}
-    _id, _title, _org, lifecycle_status, lifecycle_note = all_opps[opportunity_id]
+    _id, _title, _org, lifecycle_status, lifecycle_note, selected_at = all_opps[opportunity_id]
 
     evaluation = evidence_ops.fetch_latest_evaluation_decision(opportunity_id)
     evaluation_id, evaluation_decision = evaluation if evaluation else (None, None)
@@ -88,6 +87,7 @@ def _fetch_snapshot(opportunity_id: int) -> OpportunitySnapshot:
         organisation=organisation,
         lifecycle_status=lifecycle_status,
         lifecycle_note=lifecycle_note,
+        selected_at=selected_at,
         evaluation_id=evaluation_id,
         evaluation_decision=evaluation_decision,
         brief_id=brief_id,
@@ -261,12 +261,25 @@ STAGES: list[Stage] = [
         next_action=lambda s: "Run onbuild.admission.",
     ),
     Stage(
-        key="admitted",
-        description="Admitted - ranked, not yet progressed. ('selected' not yet enforced, PB-038.)",
+        key="selected_not_briefed",
+        description="Chosen to actively pursue; not yet briefed.",
         agent="onbuild.agents.brief",
         gate=None,
+        matches=lambda s: (
+            s.brief_id is None
+            and s.evaluation_id is not None
+            and s.evaluation_decision == "admit"
+            and s.selected_at is not None
+        ),
+        next_action=lambda s: f"Run onbuild.agents.brief {s.opportunity_id}.",
+    ),
+    Stage(
+        key="admitted_unselected",
+        description="Admitted, ranked, not yet chosen to actively pursue.",
+        agent=None,
+        gate="onbuild.selection",
         matches=lambda s: s.brief_id is None and s.evaluation_id is not None and s.evaluation_decision == "admit",
-        next_action=lambda s: f"See onbuild.overview for ranking. Run onbuild.agents.brief {s.opportunity_id} when ready to pursue.",
+        next_action=lambda s: "See onbuild.overview for ranking. Run onbuild.selection to choose it.",
     ),
     Stage(
         key="candidate",

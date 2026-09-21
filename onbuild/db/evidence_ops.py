@@ -201,6 +201,54 @@ def put_opportunity_on_hold(opportunity_id: int, note: str | None) -> None:
         conn.close()
 
 
+def fetch_admitted_unselected() -> list[tuple]:
+    """Admitted opportunities not yet chosen to actively pursue (PB-039) -
+    the pool `onbuild.selection` presents. Same ranking as
+    `fetch_overview` (deadline soonest first, then fit_score), but
+    restricted to `selected_at IS NULL` and to opportunities still worth
+    choosing among: active or on hold, not already closed, rejected, or
+    further along than 'admitted' (a brief already exists)."""
+    conn = connect()
+    try:
+        return conn.execute(
+            """
+            SELECT o.id, o.title, o.organisation, o.track, o.application_deadline,
+                   o.lifecycle_note, e.fit_score, e.fit_tier, e.fit_summary
+            FROM opportunities o
+            JOIN evaluations e ON e.id = (
+                SELECT MAX(id) FROM evaluations WHERE opportunity_id = o.id
+            )
+            WHERE e.human_decision = 'admit'
+              AND o.selected_at IS NULL
+              AND (o.lifecycle_status IS NULL OR o.lifecycle_status = 'on_hold')
+              AND NOT EXISTS (SELECT 1 FROM briefs WHERE opportunity_id = o.id)
+            ORDER BY
+                CASE WHEN o.application_deadline IS NULL THEN 1 ELSE 0 END,
+                o.application_deadline ASC,
+                e.fit_score DESC
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def mark_opportunity_selected(opportunity_id: int) -> None:
+    """Records the choice to actively pursue an admitted opportunity
+    (PB-039) - a fact-only gate, same reasoning as `submission_confirmation`
+    and `put_opportunity_on_hold`: this isn't a content judgment, it's
+    Ingolv committing effort starting now. `onbuild.agents.brief` requires
+    this to be set, in addition to admission, before it will run."""
+    conn = connect()
+    try:
+        conn.execute(
+            "UPDATE opportunities SET selected_at=datetime('now') WHERE id=?",
+            (opportunity_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def fetch_overview() -> list[tuple]:
     """The admitted-opportunities ranked list PB-022 named and never
     built, now including deadline urgency (PB-032), paused-decision
@@ -298,13 +346,37 @@ def fetch_opportunity(opportunity_id: int) -> tuple | None:
 def fetch_all_opportunities() -> list[tuple]:
     """Every opportunity, oldest first - for PB-038's registry to classify
     across the whole pipeline, not just the admitted-ranked slice
-    `fetch_overview` covers."""
+    `fetch_overview` covers. Includes `selected_at` (PB-039) so the
+    registry can distinguish admitted-not-yet-chosen from chosen-but-
+    not-yet-briefed."""
     conn = connect()
     try:
         return conn.execute(
-            "SELECT id, title, organisation, lifecycle_status, lifecycle_note "
+            "SELECT id, title, organisation, lifecycle_status, lifecycle_note, selected_at "
             "FROM opportunities ORDER BY id"
         ).fetchall()
+    finally:
+        conn.close()
+
+
+def fetch_selection_status(opportunity_id: int) -> tuple[str | None, str | None]:
+    """(latest evaluation human_decision, selected_at) for one opportunity
+    (PB-039) - the two facts `onbuild.agents.brief` requires before it will
+    run: admitted, and chosen to actively pursue right now."""
+    conn = connect()
+    try:
+        evaluation = conn.execute(
+            "SELECT human_decision FROM evaluations WHERE opportunity_id = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (opportunity_id,),
+        ).fetchone()
+        opportunity = conn.execute(
+            "SELECT selected_at FROM opportunities WHERE id = ?",
+            (opportunity_id,),
+        ).fetchone()
+        evaluation_decision = evaluation[0] if evaluation else None
+        selected_at = opportunity[0] if opportunity else None
+        return evaluation_decision, selected_at
     finally:
         conn.close()
 

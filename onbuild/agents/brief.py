@@ -1,7 +1,9 @@
 """
 Brief-writing agent: the first point in this system where important outside
 information is imported (Ingolv's own framing). Given one opportunity
-(already evaluated and admitted), it researches the company and the
+(already evaluated, admitted, AND selected via `onbuild.selection` - PB-039;
+admission alone means "not a bad fit," not "pursue this now"), it
+researches the company and the
 company's position in the opportunity's field - independently of the
 listing itself, so the read isn't anchored to what the posting claims about
 itself - then assesses how the specific position fits into both, then
@@ -427,6 +429,23 @@ def _build_prompt(opportunity_id: int) -> str:
 async def write_brief(opportunity_id: int) -> None:
     global _CURRENT_OPPORTUNITY_ID
     init_db()
+
+    # PB-039: admission alone means "not a bad fit" - it does not mean
+    # "pursue this now." Brief-writing requires both, checked here in
+    # addition to (not instead of) the pipeline registry's own read-only
+    # view of the same fact (PB-038's defense-in-depth principle).
+    evaluation_decision, selected_at = evidence_ops.fetch_selection_status(opportunity_id)
+    if evaluation_decision != "admit":
+        raise ValueError(
+            f"Opportunity #{opportunity_id} is not admitted (human_decision="
+            f"{evaluation_decision!r}). Run onbuild.admission first."
+        )
+    if selected_at is None:
+        raise ValueError(
+            f"Opportunity #{opportunity_id} is admitted but not yet selected. "
+            f"Run onbuild.selection first to choose it from the ranked list."
+        )
+
     _CURRENT_OPPORTUNITY_ID = opportunity_id
     prompt = _build_prompt(opportunity_id)
 
