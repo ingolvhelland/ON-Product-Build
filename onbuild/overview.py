@@ -1,10 +1,10 @@
 """
 Overview CLI (PB-032) - the admitted-opportunities ranked list PB-022
-named and never built, extended with deadline urgency and, since PB-036,
-a "pending" flag when a brief, application, or interview prep is sitting
-paused for that opportunity - the same foregrounding purpose as the
-deadline sort: a paused decision with a real deadline attached shouldn't
-need to be remembered.
+named and never built, extended with deadline urgency, a "pending" flag
+when a brief, application, or interview prep is sitting paused for that
+opportunity (PB-036), and 'on_hold' visibility with its reason (PB-037) -
+the same foregrounding purpose throughout: a paused decision or an
+externally-blocked opportunity shouldn't need to be remembered by hand.
 
 Runs `evidence_ops.close_expired_opportunities()` first - deterministic,
 not a judgment (a deadline having passed with nothing submitted is a
@@ -36,7 +36,7 @@ def main() -> None:
     print(f"{'#':<4} {'Title':<38} {'Org':<18} {'Status':<24} {'Deadline':<12} {'Score':<6} {'Tier':<14} {'Pending'}")
     print("-" * 140)
     for (
-        opp_id, title, organisation, lifecycle_status, deadline, fit_score, fit_tier,
+        opp_id, title, organisation, lifecycle_status, deadline, lifecycle_note, fit_score, fit_tier,
         latest_brief_decision, latest_application_decision, latest_interview_prep_decision,
     ) in rows:
         status = lifecycle_status or "active"
@@ -58,6 +58,8 @@ def main() -> None:
             f"{status:<24} {deadline_display:<12} {fit_score or '-':<6} "
             f"{(fit_tier or '-'):<14} {pending_display}"
         )
+        if lifecycle_note:
+            print(f"     note: {lifecycle_note}")
 
 
 if __name__ == "__main__":

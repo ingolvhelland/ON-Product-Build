@@ -165,16 +165,36 @@ def close_expired_opportunities() -> list[int]:
 
 
 def relist_opportunity(opportunity_id: int, new_deadline: str) -> None:
-    """A posting reappearing with a new deadline reopens a 'closed'
-    opportunity - a fact update, same reasoning as
-    `close_expired_opportunities` (PB-032)."""
+    """A posting reappearing with a real, known deadline reopens a
+    'closed' or 'on_hold' opportunity - a fact update, same reasoning as
+    `close_expired_opportunities` (PB-032, extended for 'on_hold' in
+    PB-037). Clears lifecycle_note - whatever explained the hold no longer
+    applies once there's a real deadline to act on."""
     conn = connect()
     try:
         conn.execute(
-            "UPDATE opportunities SET application_deadline=?, "
-            "lifecycle_status=CASE WHEN lifecycle_status='closed' THEN NULL "
-            "ELSE lifecycle_status END WHERE id=?",
+            "UPDATE opportunities SET application_deadline=?, lifecycle_note=NULL, "
+            "lifecycle_status=CASE WHEN lifecycle_status IN ('closed', 'on_hold') "
+            "THEN NULL ELSE lifecycle_status END WHERE id=?",
             (new_deadline, opportunity_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def put_opportunity_on_hold(opportunity_id: int, note: str | None) -> None:
+    """The opportunity is genuinely still live but not currently
+    actionable for an external reason (PB-037) - distinct from 'closed',
+    which means it's actually dead. No deadline is cleared, since none is
+    usually known yet when this is called; `relist_opportunity` is what
+    moves it back to active once a real deadline is known."""
+    conn = connect()
+    try:
+        conn.execute(
+            "UPDATE opportunities SET lifecycle_status='on_hold', "
+            "lifecycle_note=? WHERE id=?",
+            (note, opportunity_id),
         )
         conn.commit()
     finally:
@@ -183,19 +203,20 @@ def relist_opportunity(opportunity_id: int, new_deadline: str) -> None:
 
 def fetch_overview() -> list[tuple]:
     """The admitted-opportunities ranked list PB-022 named and never
-    built, now including deadline urgency (PB-032) and paused-decision
-    visibility (PB-036) - a paused brief/application/interview-prep is
-    exactly the thing that should surface here rather than being
-    forgotten, especially with a deadline attached. Only opportunities
-    with a real admit decision, still active or awaiting outcome (not
-    closed, not rejected) - sorted so an approaching deadline always
-    surfaces first, then by fit_score."""
+    built, now including deadline urgency (PB-032), paused-decision
+    visibility (PB-036), and 'on_hold' visibility (PB-037) - a paused
+    brief/application/interview-prep, or an opportunity on hold for an
+    external reason, is exactly the thing that should surface here rather
+    than being forgotten, especially with a deadline attached. Only
+    opportunities with a real admit decision, still active, on hold, or
+    awaiting outcome (not closed, not rejected) - sorted so an
+    approaching deadline always surfaces first, then by fit_score."""
     conn = connect()
     try:
         return conn.execute(
             """
             SELECT o.id, o.title, o.organisation, o.lifecycle_status,
-                   o.application_deadline, e.fit_score, e.fit_tier,
+                   o.application_deadline, o.lifecycle_note, e.fit_score, e.fit_tier,
                    (SELECT human_decision FROM briefs
                     WHERE opportunity_id = o.id ORDER BY id DESC LIMIT 1) AS latest_brief_decision,
                    (SELECT human_decision FROM applications
@@ -208,7 +229,7 @@ def fetch_overview() -> list[tuple]:
             )
             WHERE e.human_decision = 'admit'
               AND (o.lifecycle_status IS NULL
-                   OR o.lifecycle_status IN ('submitted_pending_outcome', 'awaiting_action'))
+                   OR o.lifecycle_status IN ('submitted_pending_outcome', 'awaiting_action', 'on_hold'))
             ORDER BY
                 CASE WHEN o.application_deadline IS NULL THEN 1 ELSE 0 END,
                 o.application_deadline ASC,

@@ -1,14 +1,16 @@
 """
-Relist-opportunity CLI (PB-032) - reopens an opportunity that
-`evidence_ops.close_expired_opportunities()` closed because its deadline
-passed with nothing submitted, when the same posting reappears with a new
-deadline. A fact update, not a judgment - same reasoning as
-`onbuild.submission_confirmation`.
+Relist-opportunity CLI (PB-032, extended PB-037) - reopens an opportunity
+that is `closed` (its deadline passed with nothing submitted) or
+`on_hold` (genuinely still live but not currently actionable), once a
+real deadline is actually known again. A fact update, not a judgment -
+same reasoning as `onbuild.submission_confirmation`. Clears
+`lifecycle_note` - whatever explained the hold no longer applies once
+there's a real deadline to act on.
 
-Only actually reopens something that is currently `lifecycle_status='closed'`
-- setting a deadline on an opportunity in any other state (already
-submitted, already rejected, etc.) just updates the date, it never
-resurrects a state that wasn't 'closed' to begin with.
+Only actually reopens something currently `lifecycle_status='closed'` or
+`'on_hold'` - setting a deadline on an opportunity in any other state
+(already submitted, already rejected, etc.) just updates the date, it
+never resurrects a state that wasn't closed or on hold to begin with.
 
 Run it directly:
 
@@ -31,7 +33,7 @@ def main() -> None:
     evidence_ops.relist_opportunity(args.opportunity_id, args.new_deadline)
     print(
         f"Opportunity #{args.opportunity_id}: application_deadline set to "
-        f"{args.new_deadline}. Reopened if it was 'closed'."
+        f"{args.new_deadline}. Reopened if it was 'closed' or 'on_hold'."
     )
 
 
