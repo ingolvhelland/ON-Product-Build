@@ -295,6 +295,80 @@ def fetch_opportunity(opportunity_id: int) -> tuple | None:
         conn.close()
 
 
+def fetch_all_opportunities() -> list[tuple]:
+    """Every opportunity, oldest first - for PB-038's registry to classify
+    across the whole pipeline, not just the admitted-ranked slice
+    `fetch_overview` covers."""
+    conn = connect()
+    try:
+        return conn.execute(
+            "SELECT id, title, organisation, lifecycle_status, lifecycle_note "
+            "FROM opportunities ORDER BY id"
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def fetch_latest_evaluation_decision(opportunity_id: int) -> tuple | None:
+    """Minimal counterpart to `fetch_latest_evaluation` - just enough to
+    classify pipeline stage (PB-038's registry), not the full content an
+    agent would need. None means no evaluation exists at all yet, distinct
+    from an evaluation existing with `human_decision` still None."""
+    conn = connect()
+    try:
+        return conn.execute(
+            "SELECT id, human_decision FROM evaluations "
+            "WHERE opportunity_id = ? ORDER BY id DESC LIMIT 1",
+            (opportunity_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def fetch_latest_brief_decision(opportunity_id: int) -> tuple | None:
+    """Minimal counterpart to `fetch_latest_brief` (PB-038's registry)."""
+    conn = connect()
+    try:
+        return conn.execute(
+            "SELECT id, human_decision FROM briefs "
+            "WHERE opportunity_id = ? ORDER BY id DESC LIMIT 1",
+            (opportunity_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def fetch_latest_application_decision(opportunity_id: int) -> tuple | None:
+    """Minimal counterpart to `fetch_latest_application` (PB-038's
+    registry) - adds `submitted_at`, which the full fetch doesn't carry,
+    since stage classification needs to distinguish approved-not-yet-
+    submitted from actually submitted."""
+    conn = connect()
+    try:
+        return conn.execute(
+            "SELECT id, human_decision, submitted_at FROM applications "
+            "WHERE opportunity_id = ? ORDER BY id DESC LIMIT 1",
+            (opportunity_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def fetch_latest_outcome_decision(application_id: int) -> tuple | None:
+    """Minimal outcome lookup for one application (PB-038's registry) -
+    whether a message has been classified for it yet, and whether that
+    classification has been reviewed."""
+    conn = connect()
+    try:
+        return conn.execute(
+            "SELECT id, human_decision, category FROM outcomes "
+            "WHERE application_id = ? ORDER BY id DESC LIMIT 1",
+            (application_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+
 def fetch_latest_evaluation(opportunity_id: int) -> tuple | None:
     conn = connect()
     try:
