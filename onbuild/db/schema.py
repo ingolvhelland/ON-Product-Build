@@ -357,6 +357,18 @@ CREATE TABLE IF NOT EXISTS interview_preps (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- PB-040 (the authorship principle, resolved in PB-038): past submission,
+-- the recipient authors the fact a message represents, not Ingolv - so the
+-- outcome agent applies `applied_category`/`applied_at`/lifecycle_status
+-- directly for every category except 'unclear' (no fact yet exists to
+-- transcribe), rather than proposing it for a human gate. `human_decision`
+-- is therefore no longer the mechanism that applies anything - it's
+-- reviewer bookkeeping, only ever set by a human: 'confirm' (accepted the
+-- agent's own category when resolving a formerly-unapplied row - only
+-- possible for 'unclear' or a pre-PB-040 legacy row), 'recategorize' (chose
+-- a different category while resolving one), 'override' (corrected an
+-- already-applied outcome - `onbuild.outcome_decision`'s exception path,
+-- not its default flow), or 'ignore' (not actually decision-relevant).
 CREATE TABLE IF NOT EXISTS outcomes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     application_id INTEGER NOT NULL REFERENCES applications(id),
@@ -366,8 +378,10 @@ CREATE TABLE IF NOT EXISTS outcomes (
     category TEXT NOT NULL,             -- 'receipt_confirmation' | 'interview' | 'rejection' | 'further_info' | 'other_request' | 'unclear'
     rationale TEXT NOT NULL,
     suggested_next_step TEXT,
-    human_decision TEXT,                -- 'confirm' | 'recategorize' | 'ignore'
-    decided_category TEXT,              -- filled only when human_decision='recategorize'
+    applied_category TEXT,              -- the category actually applied to lifecycle_status (PB-040); NULL until applied
+    applied_at TEXT,                    -- when applied_category was set; NULL means still awaiting a human decision (or predates PB-040)
+    human_decision TEXT,                -- 'confirm' | 'recategorize' | 'override' | 'ignore' - review bookkeeping only, PB-040
+    decided_category TEXT,              -- filled when human_decision is 'recategorize' or 'override'
     revision_notes TEXT,
     decided_at TEXT,
     source TEXT,
@@ -406,6 +420,10 @@ _COLUMN_MIGRATIONS = {
     ],
     "applications": [
         ("submitted_at", "TEXT"),
+    ],
+    "outcomes": [
+        ("applied_category", "TEXT"),
+        ("applied_at", "TEXT"),
     ],
 }
 

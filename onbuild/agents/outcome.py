@@ -10,10 +10,19 @@ drafting checking a brief's human_decision). Run
 `onbuild.submission_confirmation` first if this raises - it means Ingolv
 hasn't yet confirmed the approved draft was actually sent.
 
-Never mutates opportunities.lifecycle_status directly (PB-022/PB-027): this
-agent only classifies and writes its classification as a proposal via
-record_outcome; the actual lifecycle-state change happens afterward, only
-through `onbuild.outcome_decision`, the human gate.
+Applies its classification directly to opportunities.lifecycle_status
+(PB-038/PB-040's authorship principle): past submission, the fact a
+message represents is authored by the recipient, not Ingolv, so
+recording it is not a proposal awaiting approval - it's this agent
+updating the system to reflect what already happened in the world, the
+same way onbuild.submission_confirmation records a fact rather than
+judging content. 'unclear' is the sole exception - if the message can't
+be confidently classified, there is no fact yet to apply, and it waits
+for a human decision via `onbuild.outcome_decision`. A human can still
+correct an already-applied classification afterward
+(`onbuild.outcome_decision --override`) - the exception path, not the
+norm (PB-002's "action never bypasses human approval" still governs
+everything *before* submission; this agent only ever acts *after* it).
 
 Mailbox-access mechanism deliberately not built (PB-027's named boundary,
 same reasoning as PB-025's deferred application-portal browser automation):
@@ -127,10 +136,14 @@ async def propose_evidence_edge(args: dict) -> dict:
 
 @tool(
     "record_outcome",
-    "Record the classification of this message. Call this exactly once, "
-    "after all reasoning is complete. Written directly - a classification, "
-    "not evidence; the real human gate is the separate confirm/recategorize/"
-    "ignore decision recorded afterward.",
+    "Record the classification of this message and, for every category "
+    "except 'unclear', apply it directly - the recipient authored this "
+    "fact, not you, so it updates the opportunity's lifecycle_status "
+    "immediately rather than waiting on approval (PB-040). Call this "
+    "exactly once, after all reasoning is complete. 'unclear' is the only "
+    "category that does NOT get applied - it waits for a human decision "
+    "via onbuild.outcome_decision, since there is no real fact yet to "
+    "transcribe.",
     {
         "application_id": int,
         "opportunity_id": int,
@@ -141,25 +154,51 @@ async def propose_evidence_edge(args: dict) -> dict:
     },
 )
 async def record_outcome(args: dict) -> dict:
+    category = args["category"]
     outcome_id = evidence_ops.insert_outcome(
         args["application_id"],
         args["opportunity_id"],
         _CURRENT_MESSAGE_TEXT,
         args.get("submission_confirmed"),
-        args["category"],
+        category,
         args["rationale"],
         args.get("suggested_next_step"),
         SOURCE_TAG,
     )
-    return {
-        "content": [
-            {
-                "type": "text",
-                "text": f"Recorded outcome #{outcome_id} for opportunity "
-                f"#{args['opportunity_id']}: category={args['category']}",
-            }
-        ]
-    }
+
+    lines = [
+        f"Recorded outcome #{outcome_id} for opportunity "
+        f"#{args['opportunity_id']}: category={category}"
+    ]
+    if category == "unclear":
+        lines.append(
+            "Category is 'unclear' - no fact to apply yet. Awaiting a "
+            "human decision via onbuild.outcome_decision."
+        )
+    else:
+        new_status = evidence_ops.apply_outcome(
+            outcome_id, args["opportunity_id"], category
+        )
+        if new_status:
+            lines.append(
+                f"Applied directly: opportunity #{args['opportunity_id']} "
+                f"lifecycle_status -> '{new_status}'."
+            )
+        else:
+            lines.append(
+                "Applied directly: no lifecycle_status change needed for "
+                "this category (already correct)."
+            )
+        promoted_nodes, promoted_edges = evidence_ops.promote_provisional_evidence(
+            "outcome", args["opportunity_id"]
+        )
+        if promoted_nodes or promoted_edges:
+            lines.append(
+                f"-> promoted {len(promoted_nodes)} evidence node(s) and "
+                f"{len(promoted_edges)} edge(s) to 'provisional' (live now; "
+                f"onbuild.digest is the override window)."
+            )
+    return {"content": [{"type": "text", "text": "\n".join(lines)}]}
 
 
 # Set by classify_message() before each run, read by record_outcome's tool
@@ -173,8 +212,12 @@ OUTCOME_SYSTEM_PROMPT = """\
 You are the outcome agent for a personal opportunity-navigation system.
 You are given exactly one captured message (a forwarded email, a portal
 notification, anything received after an application was submitted) about
-exactly one opportunity, and you classify it. You do no research and take
-no action of any kind - you only read and classify.
+exactly one opportunity, and you classify it. You do no research - you
+only read and classify. record_outcome applies your classification
+directly to the opportunity's state for every category except
+'unclear': report exactly what the message says, plainly and
+conservatively, because it will take effect immediately, not wait on a
+human gate first.
 
 You will be given the opportunity's posting text, the application that was
 actually sent (its format assessment, CV, and cover letter/message), and
@@ -304,11 +347,14 @@ async def classify_message(opportunity_id: int, message_text: str) -> None:
             "mcp__outcome__propose_evidence_edge",
             "mcp__outcome__record_outcome",
         ],
-        # Safe by construction: no built-in tools at all, and every MCP
+        # Safe by construction: no built-in tools at all, so nothing this
+        # agent does reaches anywhere outside this database. Every MCP
         # tool either writes status='proposed' rows (reviewed like
-        # everything else) or writes a classification directly - a
-        # recommendation for human review, never a lifecycle-state change
-        # and never a reply sent anywhere.
+        # everything else) or, for record_outcome, applies a classified
+        # message's fact directly to lifecycle_status (PB-040) - real,
+        # but bounded to a plain field update on one row this agent was
+        # explicitly handed; still never a reply sent anywhere, and
+        # nothing before submission is touched by this agent at all.
         permission_mode="bypassPermissions",
         max_turns=50,
     )

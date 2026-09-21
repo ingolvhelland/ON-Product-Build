@@ -881,17 +881,19 @@ def resolve_unmatched_message(unmatched_id: int) -> None:
 
 
 def fetch_confirmed_interview_outcome(opportunity_id: int) -> tuple | None:
-    """The most recent outcome for this opportunity that was actually
-    decided (confirm or recategorize) into 'interview' - the real
-    invitation message the interview-preparation agent reads for who the
-    interview is scheduled with (PB-035)."""
+    """The most recent outcome for this opportunity actually applied
+    (PB-040) as 'interview' - the real invitation message the
+    interview-preparation agent reads for who the interview is scheduled
+    with (PB-035). Keyed on `applied_category`, not `human_decision`:
+    most interview outcomes are applied directly by the outcome agent
+    now and are never reviewed by a human at all, so `human_decision`
+    stays NULL for them - `applied_category` is the fact that matters."""
     conn = connect()
     try:
         return conn.execute(
             "SELECT id, application_id, captured_message_text "
             "FROM outcomes WHERE opportunity_id = ? "
-            "AND human_decision IN ('confirm', 'recategorize') "
-            "AND decided_category = 'interview' "
+            "AND applied_category = 'interview' "
             "ORDER BY id DESC LIMIT 1",
             (opportunity_id,),
         ).fetchone()
@@ -1043,6 +1045,49 @@ def insert_outcome(
         )
         conn.commit()
         return cur.lastrowid
+    finally:
+        conn.close()
+
+
+# The authorship principle (PB-038, implemented PB-040): past submission,
+# the recipient authors this fact, not Ingolv - 'receipt_confirmation' and
+# 'unclear' are intentionally absent. 'receipt_confirmation' needs no
+# lifecycle_status change (submission_confirmation already set it);
+# 'unclear' has no fact yet to apply - it's the sole category that still
+# requires a human decision (`onbuild.outcome_decision`) before anything
+# is applied. Shared between the outcome agent's direct-apply path and
+# `onbuild.outcome_decision`'s resolve/override paths, so the mapping
+# can't drift between the two.
+OUTCOME_LIFECYCLE_STATUS = {
+    "interview": "interview",
+    "rejection": "rejected",
+    "further_info": "awaiting_action",
+    "other_request": "awaiting_action",
+}
+
+
+def apply_outcome(outcome_id: int, opportunity_id: int, category: str) -> str | None:
+    """Applies the real-world fact a classified message represents
+    directly - the opportunity's own `lifecycle_status` if this category
+    maps to one, and always `outcomes.applied_category`/`applied_at` so
+    the row is no longer awaiting a decision. Returns the new
+    lifecycle_status, or None if this category needs no change (already
+    correct, e.g. 'receipt_confirmation'). Never call this for 'unclear' -
+    there is no fact yet to apply."""
+    new_status = OUTCOME_LIFECYCLE_STATUS.get(category)
+    conn = connect()
+    try:
+        if new_status:
+            conn.execute(
+                "UPDATE opportunities SET lifecycle_status=? WHERE id=?",
+                (new_status, opportunity_id),
+            )
+        conn.execute(
+            "UPDATE outcomes SET applied_category=?, applied_at=datetime('now') WHERE id=?",
+            (category, outcome_id),
+        )
+        conn.commit()
+        return new_status
     finally:
         conn.close()
 

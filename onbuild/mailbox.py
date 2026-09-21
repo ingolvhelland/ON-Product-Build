@@ -21,11 +21,13 @@ Safety guarantees, by construction, not by convention:
   never by mutating anything on the live account (PB-007: the database is
   the sole source of truth).
 - Matching a message to an opportunity is a plain heuristic (organisation
-  name against sender/subject/body) - a genuine misread only wastes one
-  `onbuild.outcome_decision` review cycle, it can never itself change
-  `lifecycle_status`, because that gate is untouched by this script
-  (PB-022/PB-027: the outcome agent - and everything upstream of it - never
-  mutates pipeline state directly).
+  name against sender/subject/body) - a genuine mismatch only risks the
+  outcome agent classifying the wrong opportunity's message, which
+  `onbuild.outcome_decision --override <opportunity_id>` exists to correct
+  (PB-040). This script itself never touches `lifecycle_status` or
+  anything else - it only decides which opportunity a message belongs to
+  and hands it to `onbuild.agents.outcome`, which is where classification
+  and (since PB-040) direct application actually happen.
 - Zero or multiple candidate matches are never guessed at - the message is
   held in `unmatched_mailbox_messages` for manual resolution, never
   dropped (PB-004's discovery-capture discipline, applied to live mail).
