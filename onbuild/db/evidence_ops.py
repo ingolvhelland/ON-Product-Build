@@ -136,6 +136,113 @@ def insert_opportunity(
         conn.close()
 
 
+def opportunity_exists(title: str, organisation: str | None) -> bool:
+    """Dedup check for the scanning agent (PB-042): normalized
+    (lowercased, trimmed) title+organisation match against every
+    opportunity already in the system, regardless of how it got there -
+    manual entry, a previous scan, or a mailbox-fed discovery all share
+    the same front door (PB-038), so they all count as prior art here."""
+    conn = connect()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM opportunities "
+            "WHERE lower(trim(title)) = lower(trim(?)) "
+            "AND lower(trim(coalesce(organisation, ''))) = lower(trim(coalesce(?, ''))) "
+            "LIMIT 1",
+            (title, organisation),
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
+def insert_candidate_opportunity(
+    title: str,
+    organisation: str | None,
+    raw_text: str,
+    source: str,
+    application_deadline: str | None = None,
+) -> int | None:
+    """The scanning agent's one write path (PB-042) - wraps
+    `opportunity_exists`'s dedup check and `insert_opportunity` together
+    so every caller (the full scan, mailbox-fed extraction) gets the same
+    guarantee for free. Returns the new opportunity's id, or None if it's
+    a duplicate of something already tracked (nothing is inserted in
+    that case). `track` is deliberately left NULL - which track this
+    belongs to is a human/evaluation-time call (`onbuild.agents.evaluation
+    --track`), not something a discovery agent should assert."""
+    if opportunity_exists(title, organisation):
+        return None
+    return insert_opportunity(
+        title, organisation, raw_text, source, None, application_deadline
+    )
+
+
+def fetch_top_evaluations(limit: int = 5) -> list[tuple]:
+    """The highest-`fit_score` evaluations across every opportunity,
+    regardless of source (PB-042) - context for the scanning agent's own
+    query generation. Deliberately not scoped to admitted-only or to
+    scan-discovered opportunities: a good fit found by hand, outside the
+    normal search parameters, should shape future searches exactly as
+    much as one the scan agent found itself (Ingolv's own framing).
+    Fewer rows than `limit` simply means less evaluation history exists
+    yet - the caller is expected to lean more on the evidence graph
+    directly when this returns little or nothing."""
+    conn = connect()
+    try:
+        return conn.execute(
+            """
+            SELECT o.title, o.organisation, e.fit_summary, e.distinctiveness,
+                   e.requirement_matches, e.fit_score, e.fit_tier
+            FROM evaluations e
+            JOIN opportunities o ON o.id = e.opportunity_id
+            WHERE e.fit_score IS NOT NULL
+            ORDER BY e.fit_score DESC, e.id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def insert_scan_source(label: str, url: str) -> int:
+    conn = connect()
+    try:
+        cur = conn.execute(
+            "INSERT INTO scan_sources (label, url) VALUES (?, ?)",
+            (label, url),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def list_scan_sources(active_only: bool = False) -> list[tuple]:
+    conn = connect()
+    try:
+        query = "SELECT id, label, url, active FROM scan_sources"
+        if active_only:
+            query += " WHERE active = 1"
+        query += " ORDER BY id"
+        return conn.execute(query).fetchall()
+    finally:
+        conn.close()
+
+
+def set_scan_source_active(source_id: int, active: bool) -> None:
+    conn = connect()
+    try:
+        conn.execute(
+            "UPDATE scan_sources SET active=? WHERE id=?",
+            (int(active), source_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def close_expired_opportunities() -> list[int]:
     """Deterministic, not a judgment - a deadline having passed with
     nothing submitted is a plain fact, so this runs automatically as a

@@ -8,23 +8,25 @@ that design actually gets built; it is not where decisions get made.
 
 ## Current state
 
-Six of the pipeline's agents are built: curator (evidence intake),
-evaluation (fit assessment), brief-writing (company/field/location
-research and strategy), drafting (application material), outcome
-(classifying a post-submission message, fed either by a live, read-only
-scan of the dedicated job-search mailbox or a manually captured file,
-and - since PB-040 - applying that classification directly rather than
-proposing it), and interview-prep (researching who the interview is
-actually with, 5-7 evidence-grounded talking points, and
-requirement-by-requirement coverage) - all but interview-prep have run
-against real opportunities; interview-prep is verified but not yet
-exercised for real, since no real opportunity has reached the interview
-stage yet. Every human decision gate before submission - review,
-admission, selection, brief, application, submission confirmation - is a
-plain command-line tool with no AI in it; after submission, outcome and
-interview-prep are agents whose output is either applied directly
-(outcome, PB-040) or still gated (interview-prep). See
-`PRODUCT_BUILD_LOG.md` entries PB-009 through PB-040 for the reasoning
+Seven of the pipeline's agents are built: scanning (candidate-opportunity
+discovery - web search, configured job boards, and mailbox-fed
+extraction), curator (evidence intake), evaluation (fit assessment),
+brief-writing (company/field/location research and strategy), drafting
+(application material), outcome (classifying a post-submission message,
+fed either by a live, read-only scan of the dedicated job-search mailbox
+or a manually captured file, and - since PB-040 - applying that
+classification directly rather than proposing it), and interview-prep
+(researching who the interview is actually with, 5-7 evidence-grounded
+talking points, and requirement-by-requirement coverage) - all but
+interview-prep have run against real opportunities (scanning has already
+discovered real candidates for real, on the live database); interview-prep
+is verified but not yet exercised for real, since no real opportunity has
+reached the interview stage yet. Every human decision gate before
+submission - review, admission, selection, brief, application, submission
+confirmation - is a plain command-line tool with no AI in it; after
+submission, outcome and interview-prep are agents whose output is either
+applied directly (outcome, PB-040) or still gated (interview-prep). See
+`PRODUCT_BUILD_LOG.md` entries PB-009 through PB-042 for the reasoning
 behind this scope and how each stage was judged.
 
 No interface exists yet, deliberately (see Log PB-034): a web dashboard
@@ -68,16 +70,34 @@ only claiming to in its own docstring. `onbuild.overview` is unaffected
 (it still shows every admitted opportunity, selected or not - selection
 narrows what brief-writing will run against, not what's visible).
 
+The scanning agent (PB-042, the last piece of PB-038's build order,
+deliberately built last so it had a real pipeline to feed into) is
+`onbuild.agents.scan`. It generates its own search queries from two live
+sources - the evidence graph directly, and the highest-`fit_score`
+evaluations recorded so far, from *any* origin (manual entry counts
+exactly as much as a previous scan) - so a good fit found by hand outside
+the normal search parameters feeds back into future searches, not just
+into that one decision. It checks the open web plus every active
+`onbuild.scan_sources` entry (a plain database table, not a config file,
+so sources can be added/disabled without touching code), and every
+distinct posting it finds becomes a plain `candidate` opportunity,
+deduplicated against everything already tracked - no evaluation, no
+track assigned, same front door as manual entry (PB-038). It also has a
+narrower, web-free entry point used directly by `onbuild.mailbox`: many
+companies ask permission to send future-opportunity emails on
+application, and those land in the same dedicated inbox `onbuild.mailbox`
+already reads - a message that doesn't match any pending application now
+tries discovery first, only falling back to the old
+`unmatched_mailbox_messages` holding pen if nothing was actually found.
+
 Known gaps, not yet acted on: the evidence graph is incomplete relative to
 Ingolv's full background (more source material still needs to go through
 the curator, deliberately, as real evaluation use reveals it's needed);
 there is no track positioning as a persisted, versioned table (PB-008/
-PB-019) - track is a plain string for now; the two pending Accura and
-Fælles Digital outcome records that predate PB-040 are still sitting
-unresolved, deliberately - resolving them means actually reading those
-emails, Ingolv's own call, via `onbuild.outcome_decision`; no scanning
-agent yet (PB-038 - deliberately built last, once there's a
-real registry and selection state for it to feed into); no interface of
+PB-019) - track is a plain string for now, deliberately left unset by the
+scanning agent and assigned later at evaluation time; no recurring
+schedule for `onbuild.agents.scan` any more than for `onbuild.mailbox` -
+both run a single pass on demand today; no interface of
 any kind (PB-034); no application-portal browser automation (PB-025 -
 deliberately not extended to live application systems the way mailbox
 access was, given the different safety stakes of an agent that could
@@ -100,6 +120,10 @@ python -m onbuild.db.schema   # creates data/onbuild.db
 ## Usage
 
 ```bash
+python -m onbuild.scan_sources list                 # see configured job-board sources
+python -m onbuild.scan_sources add "<label>" <url>   # add a job-board source
+python -m onbuild.scan_sources enable|disable <id>   # toggle a source without deleting it
+python -m onbuild.agents.scan                        # scan the open web + active sources for new candidate opportunities
 python -m onbuild.agents.curator path/to/some.txt   # propose evidence from raw text
 python -m onbuild.review                            # approve/reject what was proposed
 python -m onbuild.agents.baseline_cv --out cv.txt    # generate the baseline CV from approved evidence
@@ -204,12 +228,38 @@ spot - and on zero or multiple matches it holds the message in
 `unmatched_mailbox_messages` rather than guessing - review those
 directly and re-run `outcome` manually once the right opportunity is
 clear. A mismatch here is corrected via `onbuild.outcome_decision
---override`, same as any other wrong classification. Safe to run
+--override`, same as any other wrong classification. On zero or
+multiple matches (PB-042), before holding the message, it first tries
+`scan.extract_from_message` - many companies ask permission to send
+future-opportunity emails on application, and those land in this same
+inbox; if that finds real postings, they become candidate opportunities
+and the message is done, otherwise it falls through to the unmatched
+pile exactly as before. Safe to run
 repeatedly - it
 tracks its own progress in the database and only ever looks at mail newer
 than what it already processed. Runs a single pass each time you call it;
 wiring it to run on a recurring schedule is a separate choice, not made
 here.
+
+`agents.scan` (PB-042) is the discovery agent - the "found by scan
+agent" entry point named from the start of this project, built last
+because it needed the pipeline registry, selection, and the authorship
+principle to already exist. It reads the evidence graph plus the
+highest-`fit_score` evaluations recorded so far (any origin - manual
+entry counts exactly as much as a scan) as live context for its own
+search queries, weighted toward what has already scored well without
+narrowing only to that, then searches the open web and every active
+`scan_sources` entry directly. Every distinct posting becomes a plain
+`opportunities` row - deduplicated by normalized title+organisation
+against everything already tracked, no matter how it got there - with
+no evaluation and no track assigned; track stays a human/evaluation-time
+call (`onbuild.agents.evaluation --track`), never a discovery-time guess.
+Not every configured source renders usefully through `WebFetch` (a
+login-gated or JavaScript-heavy job board may return nothing) - when
+that happens the agent says so plainly rather than inventing content,
+and keeps going. `scan_sources` (also PB-042) manages the job-board URL
+list this checks - a plain database table, not a config file, so
+sources can be added, disabled, or re-enabled without touching code.
 
 `overview` (PB-032) is the ranked admitted-opportunities list - it runs an
 automatic, deterministic check first (any active opportunity whose

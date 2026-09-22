@@ -387,6 +387,20 @@ CREATE TABLE IF NOT EXISTS outcomes (
     source TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Configured job-board sources the scanning agent checks each run
+-- (PB-042) - a plain database table, not a code-edited config file, so
+-- it stays consistent with everything else here (the database is the
+-- one source of truth, PB-007) and is manageable via
+-- `onbuild.scan_sources` without touching code. Starts empty - nothing
+-- is seeded here; sources are added for real through that CLI.
+CREATE TABLE IF NOT EXISTS scan_sources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    label TEXT NOT NULL,
+    url TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,  -- 1/0 - onbuild.scan_sources disable/enable, never deletes history
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 

@@ -28,9 +28,14 @@ Safety guarantees, by construction, not by convention:
   anything else - it only decides which opportunity a message belongs to
   and hands it to `onbuild.agents.outcome`, which is where classification
   and (since PB-040) direct application actually happen.
-- Zero or multiple candidate matches are never guessed at - the message is
-  held in `unmatched_mailbox_messages` for manual resolution, never
-  dropped (PB-004's discovery-capture discipline, applied to live mail).
+- Zero or multiple candidate matches are never guessed at - the message
+  first goes through `onbuild.agents.scan`'s mailbox-extraction entry
+  point (PB-042: many companies ask permission to send future
+  opportunities on application, so this inbox will accumulate exactly
+  those), and only if that finds nothing is it held in
+  `unmatched_mailbox_messages` for manual resolution - never silently
+  dropped either way (PB-004's discovery-capture discipline, applied to
+  live mail).
 
 Credentials: GMAIL_ADDRESS / GMAIL_APP_PASSWORD in .env - an App Password
 (Google Account > Security > 2-Step Verification > App passwords), scoped
@@ -55,7 +60,7 @@ from email.utils import parsedate_to_datetime
 
 from dotenv import load_dotenv
 
-from onbuild.agents import outcome
+from onbuild.agents import outcome, scan
 from onbuild.db import evidence_ops
 from onbuild.db.schema import init_db
 
@@ -174,9 +179,21 @@ async def _process_message(uid: int, msg: email.message.Message) -> None:
     else:
         reason = "no candidate matched" if not matched_ids else f"{len(matched_ids)} candidates matched"
         print(f"\n=== UID {uid}: unmatched ({reason}) - {subject!r} from {sender!r} ===")
-        evidence_ops.insert_unmatched_message(
-            uid, sender, subject, message_text, json.dumps(matched_ids), received_at
-        )
+        # PB-042: not every unmatched message is outcome-relevant at all -
+        # a company Ingolv already applied to often asks permission to
+        # send future opportunities, and those land here too, since
+        # they're not about any pending application. Try discovery first;
+        # only fall back to holding it for manual outcome-review if
+        # nothing was actually found (a genuinely ambiguous or unrelated
+        # message still needs that path, unchanged).
+        recorded_ids = await scan.extract_from_message(message_text, sender)
+        if recorded_ids:
+            print(f"    -> discovered {len(recorded_ids)} new candidate opportunity(ies): "
+                  f"{', '.join(f'#{i}' for i in recorded_ids)}")
+        else:
+            evidence_ops.insert_unmatched_message(
+                uid, sender, subject, message_text, json.dumps(matched_ids), received_at
+            )
 
     evidence_ops.update_mailbox_last_uid(uid)
 
