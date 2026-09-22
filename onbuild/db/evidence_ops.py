@@ -201,6 +201,45 @@ def put_opportunity_on_hold(opportunity_id: int, note: str | None) -> None:
         conn.close()
 
 
+_CLOSEABLE_STATUSES = (None, "on_hold")
+
+
+def close_opportunity(opportunity_id: int, note: str | None) -> None:
+    """Manually marks an opportunity 'closed' - dead, no further action -
+    for a reason other than its deadline passing (PB-041): Ingolv decided
+    it, rather than `close_expired_opportunities()` deriving it from a
+    date. Only ever moves an opportunity out of 'active' (NULL) or
+    'on_hold' - raises if it isn't in one of those, since every other
+    status (rejected/interview/awaiting_action/submitted_pending_outcome/
+    already-closed) is a real recorded fact, not something to silently
+    overwrite."""
+    conn = connect()
+    try:
+        row = conn.execute(
+            "SELECT lifecycle_status FROM opportunities WHERE id=?",
+            (opportunity_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"No opportunity #{opportunity_id}")
+        current_status = row[0]
+        if current_status not in _CLOSEABLE_STATUSES:
+            raise ValueError(
+                f"Opportunity #{opportunity_id} has lifecycle_status="
+                f"{current_status!r}, not active or on_hold - refusing to "
+                f"overwrite a real recorded outcome. Use "
+                f"onbuild.outcome_decision --override if the classification "
+                f"itself was wrong."
+            )
+        conn.execute(
+            "UPDATE opportunities SET lifecycle_status='closed', "
+            "lifecycle_note=? WHERE id=?",
+            (note, opportunity_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def fetch_admitted_unselected() -> list[tuple]:
     """Admitted opportunities not yet chosen to actively pursue (PB-039) -
     the pool `onbuild.selection` presents. Same ranking as

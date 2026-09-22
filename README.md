@@ -125,6 +125,7 @@ python -m onbuild.resolve_unmatched <unmatched_id> <opportunity_id>  # classify 
 python -m onbuild.overview                          # ranked list of admitted, active/on-hold/awaiting-outcome opportunities
 python -m onbuild.hold_opportunity <opportunity_id> "<note>"  # mark an opportunity on hold - live but not currently actionable
 python -m onbuild.relist_opportunity <opportunity_id> <new_deadline>  # reopen a closed or on-hold opportunity with a new deadline
+python -m onbuild.close_opportunity <opportunity_id> "<note>"  # manually close an opportunity that's dead for a reason other than its deadline
 python -m onbuild.pipeline_status                   # read-only: every opportunity's current pipeline stage and next action
 python -m onbuild.digest                            # batch-approve/strike byproduct evidence live since the last run
 ```
@@ -221,7 +222,14 @@ clarification requested and pending), distinct from `closed` which means
 the thing is actually dead; its note stays visible in `overview` so the
 reason isn't forgotten. `relist_opportunity` reopens a `closed` or
 `on_hold` opportunity with a new deadline once one is actually known,
-clearing the hold note.
+clearing the hold note. `close_opportunity` (PB-041) is the manual
+counterpart to `overview`'s automatic deadline-based closure - for when
+Ingolv decides an opportunity is dead for some other reason (the role's
+been filled, the posting's gone) rather than a captured deadline having
+passed. Only works from active or on-hold; it refuses to overwrite a
+real recorded outcome (rejected, interview, awaiting_action,
+submitted_pending_outcome) rather than silently replacing a fact about
+what actually happened.
 
 `agents.interview_prep` (PB-035) only runs once an interview invitation
 has been applied for an opportunity (`lifecycle_status='interview'`,
