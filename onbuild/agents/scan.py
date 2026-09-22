@@ -14,10 +14,14 @@ Two entry points, one shared write path:
   future searches too) as live context for query generation, then
   searches the open web and every active `scan_sources` URL.
 - `extract_from_message(text, sender)` - narrower, no web access: given
-  one email that didn't match a pending application (most often a "send
-  me future opportunities" notice from a company Ingolv already applied
-  to), pulls out whatever real postings it actually contains. Called
-  directly by `onbuild.mailbox` for exactly this case.
+  one email that didn't match a pending application, pulls out whatever
+  real postings it actually contains - a "send me future opportunities"
+  notice from a company Ingolv already applied to (one posting, one
+  company), or a LinkedIn/job-alert-service digest (several postings,
+  several unrelated companies, none of which need any prior application)
+  - the extraction itself doesn't care which shape it's given, it just
+  records every distinct posting it actually finds. Called directly by
+  `onbuild.mailbox` for exactly this case.
 
 Both ultimately call `record_candidate_opportunity`, which wraps
 `evidence_ops.insert_candidate_opportunity`'s dedup check - a posting
@@ -201,11 +205,18 @@ actually find. When you have exhausted your searches and sources, stop.
 EXTRACT_SYSTEM_PROMPT = """\
 You are the scanning agent's mailbox-extraction entry point. You are
 given one captured email that did not match any of Ingolv's pending
-applications. It is most likely one of two things: a "we'll send you
-future opportunities" notice from a company he already applied to (many
-ask permission to send these on application), containing one or more
-new open positions - or something else entirely (a newsletter, an
-unrelated message, spam).
+applications. It is most likely one of a few things:
+- a "we'll send you future opportunities" notice from a company he
+  already applied to (many ask permission to send these on application)
+  - typically one posting, from that one company;
+- a digest from LinkedIn or a similar job-alert service - typically
+  several distinct postings, from several unrelated companies, none of
+  which need any prior application to that company;
+- something else entirely (a newsletter, an unrelated message, spam).
+
+You do not need to know which of these it is - just read the email and
+record whatever real postings it actually contains, regardless of how
+many there are or how many different companies they're from.
 
 Read the email. If it actually describes one or more distinct job
 postings or open positions, call record_candidate_opportunity once for
