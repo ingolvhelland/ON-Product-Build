@@ -315,31 +315,52 @@ async def evaluate_opportunity(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Add an opportunity and run the evaluation agent against it."
+        description="Evaluate an opportunity - either an existing candidate "
+        "(e.g. one onbuild.agents.scan found) by id, or a new one added from "
+        "raw text."
     )
-    parser.add_argument("path", type=Path, help="Path to the opportunity's raw text (job posting).")
-    parser.add_argument("--title", required=True)
+    parser.add_argument(
+        "path", type=Path, nargs="?", default=None,
+        help="Path to the opportunity's raw text (job posting) - omit when using --opportunity-id.",
+    )
+    parser.add_argument(
+        "--opportunity-id", type=int, default=None,
+        help="Evaluate an existing opportunity instead of adding a new one from a file "
+        "- its own raw_text/source are read from the database.",
+    )
+    parser.add_argument("--title", default=None)
     parser.add_argument("--organisation", default=None)
     parser.add_argument("--source", default="manual entry")
-    parser.add_argument("--track", required=True)
+    parser.add_argument("--track", required=True, help="Which track to evaluate against - always a human call, never inferred.")
     parser.add_argument(
         "--deadline",
         default=None,
         help="Application deadline, ISO date (YYYY-MM-DD) - PB-032. Omit if the "
-        "posting doesn't state one.",
+        "posting doesn't state one. Ignored with --opportunity-id - the "
+        "opportunity's existing deadline, if any, is left as-is.",
     )
     args = parser.parse_args()
 
     init_db()
-    raw_text = args.path.read_text()
-    opportunity_id = evidence_ops.insert_opportunity(
-        args.title, args.organisation, raw_text, args.source, args.track, args.deadline
-    )
-    print(f"Opportunity #{opportunity_id} added.")
-
     import asyncio
 
-    asyncio.run(evaluate_opportunity(opportunity_id, raw_text, args.source, args.track))
+    if args.opportunity_id is not None:
+        opportunity = evidence_ops.fetch_opportunity(args.opportunity_id)
+        if opportunity is None:
+            parser.error(f"No opportunity #{args.opportunity_id}")
+        opp_id, title, organisation, raw_text, source, _existing_track = opportunity
+        evidence_ops.update_opportunity_track(opp_id, args.track)
+        print(f"Opportunity #{opp_id} ('{title}'): track set to '{args.track}'.")
+        asyncio.run(evaluate_opportunity(opp_id, raw_text, source, args.track))
+    else:
+        if args.path is None or args.title is None:
+            parser.error("path and --title are required unless using --opportunity-id")
+        raw_text = args.path.read_text()
+        opportunity_id = evidence_ops.insert_opportunity(
+            args.title, args.organisation, raw_text, args.source, args.track, args.deadline
+        )
+        print(f"Opportunity #{opportunity_id} added.")
+        asyncio.run(evaluate_opportunity(opportunity_id, raw_text, args.source, args.track))
 
 
 if __name__ == "__main__":

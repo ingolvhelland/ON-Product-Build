@@ -128,7 +128,8 @@ python -m onbuild.agents.curator path/to/some.txt   # propose evidence from raw 
 python -m onbuild.review                            # approve/reject what was proposed
 python -m onbuild.agents.baseline_cv --out cv.txt    # generate the baseline CV from approved evidence
 python -m onbuild.agents.evaluation path/to/posting.txt \
-    --title "..." --organisation "..." --track "Primary" [--deadline YYYY-MM-DD]  # evaluate one opportunity
+    --title "..." --organisation "..." --track "Primary" [--deadline YYYY-MM-DD]  # add and evaluate a new opportunity
+python -m onbuild.agents.evaluation --opportunity-id <id> --track "Primary"  # evaluate an existing candidate (e.g. one onbuild.agents.scan found)
 python -m onbuild.admission                          # record admit/reject on evaluated opportunities
 python -m onbuild.selection                          # choose which admitted opportunities to actively pursue right now
 python -m onbuild.agents.brief <opportunity_id>       # write a strategic brief for an admitted AND selected opportunity

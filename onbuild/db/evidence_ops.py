@@ -136,6 +136,25 @@ def insert_opportunity(
         conn.close()
 
 
+def update_opportunity_track(opportunity_id: int, track: str) -> None:
+    """Sets track on a candidate opportunity that didn't have one yet -
+    most often one the scanning agent found (PB-042 deliberately leaves
+    track NULL there). Which track an opportunity is evaluated against is
+    a human/evaluation-time call, never a discovery-time guess; this is
+    what `onbuild.agents.evaluation --opportunity-id` persists that call
+    onto, so it's visible everywhere else the opportunity is read, not
+    just inside that one evaluation run."""
+    conn = connect()
+    try:
+        conn.execute(
+            "UPDATE opportunities SET track=? WHERE id=?",
+            (track, opportunity_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def opportunity_exists(title: str, organisation: str | None) -> bool:
     """Dedup check for the scanning agent (PB-042): normalized
     (lowercased, trimmed) title+organisation match against every
