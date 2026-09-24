@@ -156,7 +156,7 @@ def resolve() -> None:
                 final_category = _prompt_category()
                 human_decision = "recategorize"
 
-            new_status = evidence_ops.apply_outcome(outcome_id, opportunity_id, final_category)
+            new_status, backfilled = evidence_ops.apply_outcome(outcome_id, opportunity_id, final_category)
             conn.execute(
                 "UPDATE outcomes SET human_decision=?, decided_category=?, "
                 "decided_at=datetime('now') WHERE id=?",
@@ -164,6 +164,8 @@ def resolve() -> None:
             )
             conn.commit()
             applied += 1
+            if backfilled:
+                print("  -> this draft had never been marked submitted - backfilled now.")
             if new_status:
                 print(f"  -> lifecycle_status set to '{new_status}'.")
             else:
@@ -228,13 +230,15 @@ def override(opportunity_id: int) -> None:
         new_category = _prompt_category()
         notes = input("Notes (why this is being overridden): ").strip()
 
-        new_status = evidence_ops.apply_outcome(outcome_id, opportunity_id, new_category)
+        new_status, backfilled = evidence_ops.apply_outcome(outcome_id, opportunity_id, new_category)
         conn.execute(
             "UPDATE outcomes SET human_decision='override', decided_category=?, "
             "revision_notes=?, decided_at=datetime('now') WHERE id=?",
             (new_category, notes or None, outcome_id),
         )
         conn.commit()
+        if backfilled:
+            print("  -> this draft had never been marked submitted - backfilled now.")
         if new_status:
             print(f"Overridden to '{new_category}' - lifecycle_status now '{new_status}'.")
         else:

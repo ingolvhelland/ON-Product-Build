@@ -1133,13 +1133,32 @@ def update_mailbox_last_uid(uid: int, folder: str = "INBOX") -> None:
 
 
 def fetch_opportunities_awaiting_outcome() -> list[tuple]:
-    """Candidates onbuild.mailbox can match a live message against - only
-    opportunities actually awaiting a reply (PB-030)."""
+    """Candidates `onbuild.mailbox` can match a live message against -
+    opportunities actually awaiting a reply (PB-030), plus, since
+    PB-049, an approved draft never yet confirmed submitted. The second
+    case matters because a receipt or outcome message about one of
+    these IS itself the fact that submission happened - the authorship
+    principle (PB-038/040) applied one step earlier: Ingolv approving a
+    draft and then never running `onbuild.submission_confirmation` (or
+    simply moving on and not coming back to it) shouldn't make the
+    system blind to a reply that already proves what happened."""
     conn = connect()
     try:
         return conn.execute(
-            "SELECT id, title, organisation FROM opportunities "
-            "WHERE lifecycle_status IN ('submitted_pending_outcome', 'awaiting_action')"
+            """
+            SELECT o.id, o.title, o.organisation FROM opportunities o
+            WHERE o.lifecycle_status IN ('submitted_pending_outcome', 'awaiting_action')
+               OR (
+                   o.lifecycle_status IS NULL
+                   AND EXISTS (
+                       SELECT 1 FROM applications a
+                       WHERE a.id = (SELECT MAX(id) FROM applications WHERE opportunity_id = o.id)
+                         AND a.opportunity_id = o.id
+                         AND a.human_decision = 'approve'
+                         AND a.submitted_at IS NULL
+                   )
+               )
+            """
         ).fetchall()
     finally:
         conn.close()
@@ -1235,17 +1254,47 @@ OUTCOME_LIFECYCLE_STATUS = {
 }
 
 
-def apply_outcome(outcome_id: int, opportunity_id: int, category: str) -> str | None:
+def apply_outcome(outcome_id: int, opportunity_id: int, category: str) -> tuple[str | None, bool]:
     """Applies the real-world fact a classified message represents
     directly - the opportunity's own `lifecycle_status` if this category
     maps to one, and always `outcomes.applied_category`/`applied_at` so
-    the row is no longer awaiting a decision. Returns the new
-    lifecycle_status, or None if this category needs no change (already
-    correct, e.g. 'receipt_confirmation'). Never call this for 'unclear' -
-    there is no fact yet to apply."""
+    the row is no longer awaiting a decision.
+
+    If the matched application was never confirmed submitted (PB-049 -
+    approved, but `onbuild.submission_confirmation` never ran, or Ingolv
+    simply moved on and didn't come back to it), this message's own
+    arrival already proves submission happened - the authorship
+    principle (PB-038/040) applied one step earlier in the funnel - so
+    `applications.submitted_at` is backfilled first, before the
+    category's own status is applied on top.
+
+    Returns (new lifecycle_status, or None if this category needs none;
+    whether a submission was just backfilled). Never call this for
+    'unclear' - there is no fact yet to apply."""
     new_status = OUTCOME_LIFECYCLE_STATUS.get(category)
     conn = connect()
     try:
+        outcome_row = conn.execute(
+            "SELECT application_id FROM outcomes WHERE id=?", (outcome_id,)
+        ).fetchone()
+        application_id = outcome_row[0] if outcome_row else None
+
+        backfilled = False
+        if application_id is not None:
+            app_row = conn.execute(
+                "SELECT submitted_at FROM applications WHERE id=?", (application_id,)
+            ).fetchone()
+            if app_row and app_row[0] is None:
+                conn.execute(
+                    "UPDATE applications SET submitted_at=datetime('now') WHERE id=?",
+                    (application_id,),
+                )
+                conn.execute(
+                    "UPDATE opportunities SET lifecycle_status='submitted_pending_outcome' WHERE id=?",
+                    (opportunity_id,),
+                )
+                backfilled = True
+
         if new_status:
             conn.execute(
                 "UPDATE opportunities SET lifecycle_status=? WHERE id=?",
@@ -1256,7 +1305,7 @@ def apply_outcome(outcome_id: int, opportunity_id: int, category: str) -> str | 
             (category, outcome_id),
         )
         conn.commit()
-        return new_status
+        return new_status, backfilled
     finally:
         conn.close()
 

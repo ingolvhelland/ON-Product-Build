@@ -4,11 +4,15 @@ application. See PRODUCT_BUILD_ANCHOR.md's "Application pipeline, detailed"
 section and Log PB-022/PB-027/PB-029 for the design this follows.
 
 Only ever runs against an opportunity whose lifecycle_status is
-'submitted_pending_outcome' or 'awaiting_action' - checked in Python before
-the agent is invoked, not left to the agent to notice (same discipline as
-drafting checking a brief's human_decision). Run
-`onbuild.submission_confirmation` first if this raises - it means Ingolv
-hasn't yet confirmed the approved draft was actually sent.
+'submitted_pending_outcome' or 'awaiting_action', OR whose latest
+application was approved but never confirmed submitted (PB-049) -
+checked in Python before the agent is invoked, not left to the agent to
+notice (same discipline as drafting checking a brief's human_decision).
+The second case exists because a real reply can arrive before Ingolv
+ever runs `onbuild.submission_confirmation`, or he simply moves on after
+sending an application and never comes back to confirm it - the message
+itself is already proof the submission happened, so it shouldn't be
+invisible to this agent just because a separate manual step never ran.
 
 Applies its classification directly to opportunities.lifecycle_status
 (PB-038/PB-040's authorship principle): past submission, the fact a
@@ -16,13 +20,17 @@ message represents is authored by the recipient, not Ingolv, so
 recording it is not a proposal awaiting approval - it's this agent
 updating the system to reflect what already happened in the world, the
 same way onbuild.submission_confirmation records a fact rather than
-judging content. 'unclear' is the sole exception - if the message can't
-be confidently classified, there is no fact yet to apply, and it waits
-for a human decision via `onbuild.outcome_decision`. A human can still
-correct an already-applied classification afterward
-(`onbuild.outcome_decision --override`) - the exception path, not the
-norm (PB-002's "action never bypasses human approval" still governs
-everything *before* submission; this agent only ever acts *after* it).
+judging content. When the application was never confirmed submitted
+in the first place, this same principle reaches one step earlier
+(PB-049): the message's own arrival backfills `submitted_at` before the
+category's own status is applied on top. 'unclear' is the sole
+exception - if the message can't be confidently classified, there is no
+fact yet to apply, and it waits for a human decision via
+`onbuild.outcome_decision`. A human can still correct an already-applied
+classification afterward (`onbuild.outcome_decision --override`) - the
+exception path, not the norm (PB-002's "action never bypasses human
+approval" still governs everything *before* submission; this agent only
+ever acts *after* it, or on the message that proves it happened).
 
 Mailbox-access mechanism deliberately not built (PB-027's named boundary,
 same reasoning as PB-025's deferred application-portal browser automation):
@@ -176,9 +184,15 @@ async def record_outcome(args: dict) -> dict:
             "human decision via onbuild.outcome_decision."
         )
     else:
-        new_status = evidence_ops.apply_outcome(
+        new_status, backfilled = evidence_ops.apply_outcome(
             outcome_id, args["opportunity_id"], category
         )
+        if backfilled:
+            lines.append(
+                f"Opportunity #{args['opportunity_id']}'s draft had never been "
+                f"marked submitted - this message is itself the fact that it "
+                f"was, so submission has been backfilled."
+            )
         if new_status:
             lines.append(
                 f"Applied directly: opportunity #{args['opportunity_id']} "
@@ -284,12 +298,27 @@ def _build_prompt(opportunity_id: int, message_text: str) -> tuple[str, int]:
     opp_id, title, organisation, raw_text, source, track = opportunity
 
     lifecycle_status = evidence_ops.fetch_opportunity_lifecycle_status(opportunity_id)
-    if lifecycle_status not in ("submitted_pending_outcome", "awaiting_action"):
+    awaiting_outcome = lifecycle_status in ("submitted_pending_outcome", "awaiting_action")
+
+    # PB-049: also valid if the draft was approved but never confirmed
+    # submitted - this message's own arrival may be the very fact that
+    # proves it was (apply_outcome backfills submitted_at in that case).
+    _app_id, app_human_decision, app_submitted_at = (
+        evidence_ops.fetch_latest_application_decision(opportunity_id) or (None, None, None)
+    )
+    approved_not_yet_confirmed = (
+        lifecycle_status is None
+        and app_human_decision == "approve"
+        and app_submitted_at is None
+    )
+
+    if not (awaiting_outcome or approved_not_yet_confirmed):
         raise ValueError(
             f"Opportunity #{opportunity_id} has lifecycle_status="
-            f"{lifecycle_status!r}, not 'submitted_pending_outcome' or "
-            f"'awaiting_action' - run onbuild.submission_confirmation first "
-            f"to confirm the approved draft was actually sent."
+            f"{lifecycle_status!r} and its latest application's "
+            f"human_decision={app_human_decision!r} - not awaiting an "
+            f"outcome and not an approved-but-unconfirmed draft. Nothing "
+            f"here for the outcome agent to classify against."
         )
 
     application = evidence_ops.fetch_latest_application(opportunity_id)

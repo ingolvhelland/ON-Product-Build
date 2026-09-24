@@ -195,8 +195,12 @@ you strike it in that same run.
 `submission_confirmation` is a fact-only gate, not a content judgment
 (PB-029): approving a draft means it's good enough to send, not that it
 has been sent. Confirming it here sets `applications.submitted_at` and
-moves the opportunity's `lifecycle_status` to `submitted_pending_outcome` -
-required before `outcome` will run for that opportunity.
+moves the opportunity's `lifecycle_status` to `submitted_pending_outcome`.
+It's no longer the *only* way that happens (PB-049): if a real reply
+arrives before Ingolv ever runs this - he sent the application and moved
+on without confirming it here - `outcome`/`onbuild.mailbox` will catch
+it anyway and backfill `submitted_at` themselves, since the reply is
+itself proof the submission happened.
 
 `outcome` classifies one message about an already-submitted opportunity
 into one of six categories - receipt_confirmation, interview, rejection,
