@@ -198,7 +198,7 @@ async def _process_message(uid: int, msg: email.message.Message) -> None:
     evidence_ops.update_mailbox_last_uid(uid)
 
 
-async def scan() -> None:
+async def scan_mailbox() -> None:
     init_db()
     last_uid = evidence_ops.fetch_mailbox_last_uid()
     imap = _connect()
@@ -219,7 +219,7 @@ async def scan() -> None:
 
 
 def main() -> None:
-    asyncio.run(scan())
+    asyncio.run(scan_mailbox())
 
 
 if __name__ == "__main__":
