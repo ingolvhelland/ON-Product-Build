@@ -51,7 +51,8 @@ def pending_decisions(conn: sqlite3.Connection) -> list[tuple]:
         """
         SELECT e.id, e.opportunity_id, o.title, o.organisation, o.track,
                e.fit_summary, e.distinctiveness, e.gates_summary,
-               e.countercase, e.gaps_summary, e.fit_score, e.fit_tier,
+               e.countercase, e.gaps_summary, e.key_concerns,
+               e.requirement_coverage, e.fit_score, e.fit_tier,
                e.suggested_action
         FROM evaluations e
         JOIN opportunities o ON o.id = e.opportunity_id
@@ -82,6 +83,8 @@ def main() -> None:
             gates_summary,
             countercase,
             gaps_summary,
+            key_concerns,
+            requirement_coverage,
             fit_score,
             fit_tier,
             suggested_action,
@@ -95,11 +98,17 @@ def main() -> None:
                 f"fit_tier={fit_tier} | suggested_action={suggested_action}"
             )
             print(f"\nFit: {fit_summary}")
-            print(f"\nDistinctiveness: {distinctiveness}")
             print(f"\nGates: {gates_summary}")
-            print(f"\nCountercase: {countercase}")
-            if gaps_summary:
-                print(f"\nGaps: {gaps_summary}")
+            # PB-053: an evaluation has either the original fields or the
+            # leaner replacements, never both - show whichever is populated.
+            if key_concerns is not None:
+                print(f"\nKey concerns: {key_concerns}")
+                print(f"\nRequirement coverage: {requirement_coverage}")
+            else:
+                print(f"\nDistinctiveness: {distinctiveness}")
+                print(f"\nCountercase: {countercase}")
+                if gaps_summary:
+                    print(f"\nGaps: {gaps_summary}")
 
             choice = _prompt()
             if choice == "q":

@@ -148,11 +148,9 @@ async def propose_evidence_edge(args: dict) -> dict:
     {
         "opportunity_id": int,
         "fit_summary": str,
-        "distinctiveness": str,
         "gates_summary": str,
-        "countercase": str,
-        "requirement_matches": str,  # JSON string: [{"requirement","match_quality","rationale","evidence_node_ids"}]
-        "gaps_summary": str,
+        "key_concerns": str,          # PB-053 - see prompt
+        "requirement_coverage": str,  # PB-053 - see prompt
         "fit_score": int,     # 1-10, ranking aid only - see prompt
         "fit_tier": str,      # 'strong_match' | 'stretch' | 'mismatch'
         "suggested_action": str,  # 'admit' | 'reject' | 'flag'
@@ -162,11 +160,9 @@ async def record_evaluation(args: dict) -> dict:
     evaluation_id = evidence_ops.insert_evaluation(
         args["opportunity_id"],
         args["fit_summary"],
-        args["distinctiveness"],
         args["gates_summary"],
-        args["countercase"],
-        args["requirement_matches"],
-        args.get("gaps_summary"),
+        args["key_concerns"],
+        args["requirement_coverage"],
         args["fit_score"],
         args["fit_tier"],
         args["suggested_action"],
@@ -213,26 +209,39 @@ opportunities generally, not just this one), propose it as a new edge via
 propose_evidence_edge rather than just asserting it in prose. If you
 identify a gap - a requirement with no supporting evidence at all - propose
 it as a new node with node_type "gap" via propose_evidence_node when it
-seems durable enough to track; otherwise a mention in gaps_summary is
+seems durable enough to track; otherwise a mention in key_concerns is
 enough.
 
-Your final output must be exactly one call to record_evaluation, with every
-field filled honestly:
-- fit_summary: the substantive case for or against fit - prose, not a score.
-- distinctiveness: what actually differentiates this candidacy for this
-  opportunity, if anything - do not pad this if there is nothing distinctive.
-- gates_summary: hard, checkable requirements (e.g. work authorization,
-  location, language) - state each one's pass/fail/unclear status plainly.
-- countercase: the strongest honest argument against admitting this
-  opportunity - required even when you believe the fit is strong. A weak or
-  perfunctory countercase defeats its purpose.
-- requirement_matches: a JSON array, one entry per distinct requirement you
-  identify in the posting - {"requirement": "...", "match_quality":
-  "direct|transferable|developing|hypothetical|absent_unknown", "rationale":
-  "...", "evidence_node_ids": [...]}. A requirement with no evidence still
-  gets an entry, tagged absent_unknown.
-- gaps_summary: prose summary of what's missing, distinct from any gap
-  nodes you proposed - reference them by id if you proposed any.
+This stage's job is narrowing the field, not resolving it (PB-053) - be
+honest and thorough about the signal that actually drives admit/reject,
+but do not spend the same exhaustive depth on every candidate that a
+later, much smaller admitted-and-selected set deserves from brief-writing.
+A clear reject does not need a rigorously worked-out opposing argument to
+justify it; an obvious strong match does not need one manufactured to
+satisfy a completeness rule. Depth should track how close the actual call
+is, not apply uniformly regardless of it.
+
+Your final output must be exactly one call to record_evaluation, with
+every field filled honestly:
+- fit_summary: the substantive case for or against fit, in 2-4 sentences -
+  the core of it, not a multi-paragraph brief. If something is genuinely
+  distinctive about this candidacy for this opportunity, say so here in a
+  sentence; do not pad this if there is nothing distinctive.
+- gates_summary: hard, checkable requirements (work authorization,
+  location/relocation fit against the identity graph's own tiered
+  preference if one exists, language) - one line per gate, pass/fail/
+  unclear plus a short reason, not a paragraph each.
+- key_concerns: 1-3 bullet points naming only the concerns that actually
+  matter for this decision - the strongest honest reasons against, and
+  anything genuinely missing (a gap node you proposed, or a real absence).
+  Skip this or keep it to one line when there is nothing that actually
+  weighs on the call; do not manufacture concerns to fill space, and do
+  not bury the one that matters among padding.
+- requirement_coverage: a short tally (e.g. "8 of 10 requirements: direct
+  or transferable match") followed by an explicit list of ONLY the
+  requirements that are "absent_unknown" or "hypothetical" - the ones that
+  actually carry decision risk. Do not itemize or justify the requirements
+  that are solidly matched; the tally already covers them.
 - fit_score: an integer 1-10. This is a ranking aid only, for sorting
   admitted opportunities against each other on a pending-application list -
   it is not the verdict, and it does not replace or summarize the other
@@ -244,13 +253,13 @@ field filled honestly:
   not because the case is actually strong), or "mismatch" (the substance
   itself doesn't fit, not just the surface presentation).
 - suggested_action: exactly one of "admit", "reject", or "flag". This must
-  follow from fit_tier and from whether the countercase or the case for fit
+  follow from fit_tier and from whether key_concerns or the case for fit
   is actually stronger - it cannot be decided independently of them:
-  - "reject" when the countercase substantively outweighs the case for fit
+  - "reject" when key_concerns substantively outweigh the case for fit
     (the negative case is the stronger one, not merely present), or when
     fit_tier is "mismatch".
   - "admit" when fit_tier is "strong_match", OR when fit_tier is "stretch"
-    and the case for fit is at least as strong as the countercase - a real,
+    and the case for fit is at least as strong as key_concerns - a real,
     substantive case with serious gaps is exactly what "stretch" is for,
     and it should still be admitted, clearly labeled, with a correspondingly
     low fit_score, so a human can weigh the risk on a real list rather than

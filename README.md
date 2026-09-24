@@ -181,6 +181,18 @@ most recent record per opportunity and records your actual decision
 alongside the agent's own suggested action; the gap between the two, over
 time, is the calibration data PB-002 was designed to build toward.
 
+`agents.evaluation`'s own scope was trimmed (PB-053): it's a filter
+narrowing the field, not a second brief-writing pass, so `distinctiveness`,
+a fully-worked adversarial `countercase`, and an exhaustive per-requirement
+match array are no longer required on every candidate regardless of how
+close the actual call is. Replaced by `key_concerns` (1-3 bullets, only
+what actually matters for the decision) and `requirement_coverage` (a
+tally plus only the requirements genuinely at risk) - `fit_score`/
+`fit_tier`/`suggested_action`, the actual filtering signal, are untouched.
+`admission` (and every other reader of an evaluation) shows whichever
+field set a given evaluation actually has - pre-PB-053 rows keep their
+original fields exactly as recorded.
+
 `brief_decision`, `application_decision`, and `interview_prep_decision`
 share a fourth option beyond approve/revise/drop: `pause` (PB-036) -
 "this is genuinely good, I'm just not deciding yet." A paused item isn't

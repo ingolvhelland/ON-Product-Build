@@ -399,20 +399,33 @@ def _build_prompt(opportunity_id: int) -> str:
             countercase,
             requirement_matches,
             gaps_summary,
+            key_concerns,
+            requirement_coverage,
             fit_score,
             fit_tier,
             suggested_action,
             human_decision,
         ) = evaluation
+        # PB-053: an evaluation has either the original fields or the
+        # leaner replacements, never both - show whichever is populated.
+        if key_concerns is not None:
+            detail_block = (
+                f"Key concerns: {key_concerns}\n\n"
+                f"Requirement coverage: {requirement_coverage}"
+            )
+        else:
+            detail_block = (
+                f"Distinctiveness: {distinctiveness}\n\n"
+                f"Countercase: {countercase}\n\n"
+                f"Requirement matches: {requirement_matches}\n\n"
+                f"Gaps: {gaps_summary or '(none noted)'}"
+            )
         eval_block = (
             f"EVALUATION #{eval_id} (fit_score={fit_score}, fit_tier={fit_tier}, "
             f"suggested_action={suggested_action}, human_decision={human_decision})\n"
             f"Fit summary: {fit_summary}\n\n"
-            f"Distinctiveness: {distinctiveness}\n\n"
             f"Gates: {gates_summary}\n\n"
-            f"Countercase: {countercase}\n\n"
-            f"Requirement matches: {requirement_matches}\n\n"
-            f"Gaps: {gaps_summary or '(none noted)'}"
+            f"{detail_block}"
         )
 
     return (

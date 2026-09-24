@@ -302,13 +302,17 @@ def _build_prompt(opportunity_id: int) -> tuple[str, int, int | None]:
     if evaluation is not None:
         (
             eval_id, fit_summary, distinctiveness, gates_summary, countercase,
-            requirement_matches, gaps_summary, fit_score, fit_tier,
+            requirement_matches, gaps_summary, eval_key_concerns,
+            eval_requirement_coverage, fit_score, fit_tier,
             suggested_action, eval_human_decision,
         ) = evaluation
+        # PB-053: an evaluation has either the original fields or the
+        # leaner replacements, never both - use whichever is populated.
+        matches_block = eval_requirement_coverage if eval_requirement_coverage is not None else requirement_matches
         eval_block = (
-            f"EVALUATION #{eval_id}'s requirement_matches (starting reference "
+            f"EVALUATION #{eval_id}'s requirement matches (starting reference "
             f"for requirement_coverage - do not re-derive match quality from "
-            f"scratch):\n{requirement_matches}"
+            f"scratch):\n{matches_block}"
         )
 
     application = evidence_ops.fetch_latest_application(opportunity_id)

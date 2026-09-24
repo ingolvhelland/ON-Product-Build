@@ -286,8 +286,10 @@ def fetch_top_evaluations(limit: int = 5) -> list[tuple]:
     try:
         return conn.execute(
             """
-            SELECT o.title, o.organisation, e.fit_summary, e.distinctiveness,
-                   e.requirement_matches, e.fit_score, e.fit_tier
+            SELECT o.title, o.organisation, e.fit_summary,
+                   e.distinctiveness, e.requirement_matches,
+                   e.key_concerns, e.requirement_coverage,
+                   e.fit_score, e.fit_tier
             FROM evaluations e
             JOIN opportunities o ON o.id = e.opportunity_id
             WHERE e.fit_score IS NOT NULL
@@ -531,34 +533,34 @@ def fetch_overview() -> list[tuple]:
 def insert_evaluation(
     opportunity_id: int,
     fit_summary: str,
-    distinctiveness: str,
     gates_summary: str,
-    countercase: str,
-    requirement_matches: str,
-    gaps_summary: str | None,
+    key_concerns: str,
+    requirement_coverage: str,
     fit_score: int,
     fit_tier: str,
     suggested_action: str,
     source: str,
 ) -> int:
+    """PB-053: leaner than the original spec - `distinctiveness`,
+    `countercase`, `requirement_matches`, and `gaps_summary` are no
+    longer populated for new evaluations (superseded by `key_concerns`
+    and `requirement_coverage`); the columns stay for old rows."""
     conn = connect()
     try:
         cur = conn.execute(
             """
             INSERT INTO evaluations
-                (opportunity_id, fit_summary, distinctiveness, gates_summary,
-                 countercase, requirement_matches, gaps_summary,
+                (opportunity_id, fit_summary, gates_summary,
+                 key_concerns, requirement_coverage,
                  fit_score, fit_tier, suggested_action, source)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 opportunity_id,
                 fit_summary,
-                distinctiveness,
                 gates_summary,
-                countercase,
-                requirement_matches,
-                gaps_summary or None,
+                key_concerns,
+                requirement_coverage,
                 fit_score,
                 fit_tier,
                 suggested_action,
@@ -686,11 +688,17 @@ def fetch_latest_outcome_decision(application_id: int) -> tuple | None:
 
 
 def fetch_latest_evaluation(opportunity_id: int) -> tuple | None:
+    """Includes both the original fields (`distinctiveness`/`countercase`/
+    `requirement_matches`/`gaps_summary` - populated only on pre-PB-053
+    rows) and the leaner PB-053 replacements (`key_concerns`/
+    `requirement_coverage` - populated only on new ones), so a caller can
+    display whichever set a given evaluation actually has."""
     conn = connect()
     try:
         return conn.execute(
             "SELECT id, fit_summary, distinctiveness, gates_summary, "
-            "countercase, requirement_matches, gaps_summary, fit_score, "
+            "countercase, requirement_matches, gaps_summary, "
+            "key_concerns, requirement_coverage, fit_score, "
             "fit_tier, suggested_action, human_decision "
             "FROM evaluations WHERE opportunity_id = ? ORDER BY id DESC LIMIT 1",
             (opportunity_id,),

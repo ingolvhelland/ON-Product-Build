@@ -343,15 +343,24 @@ def _build_prompt(opportunity_id: int, captured_application_text: str | None) ->
             countercase,
             requirement_matches,
             gaps_summary,
+            key_concerns,
+            requirement_coverage,
             fit_score,
             fit_tier,
             suggested_action,
             eval_human_decision,
         ) = evaluation
+        # PB-053: an evaluation has either the original fields or the
+        # leaner replacements, never both - show whichever is populated.
+        coverage_block = (
+            f"Requirement coverage: {requirement_coverage}"
+            if requirement_coverage is not None
+            else f"Requirement matches: {requirement_matches}\n\n"
+            f"Gaps: {gaps_summary or '(none noted)'}"
+        )
         eval_block = (
             f"EVALUATION #{eval_id} (fit_score={fit_score}, fit_tier={fit_tier})\n"
-            f"Requirement matches: {requirement_matches}\n\n"
-            f"Gaps: {gaps_summary or '(none noted)'}"
+            f"{coverage_block}"
         )
 
     captured_block = (

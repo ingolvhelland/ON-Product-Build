@@ -172,15 +172,29 @@ CREATE TABLE IF NOT EXISTS opportunities (
 -- in the other fields. `fit_tier` in particular makes a genuine grey-zone
 -- case - real substantive fit alongside serious gaps - visible as its own
 -- category rather than forcing a binary admit/reject read.
+-- PB-053: distinctiveness/countercase/requirement_matches were mandatory
+-- (NOT NULL) fields asking for the same exhaustive depth on every single
+-- candidate, including the obvious rejects - expensive reasoning for a
+-- stage whose job is narrowing the field, not resolving it. Relaxed to
+-- nullable and superseded by two leaner fields for new evaluations:
+-- `key_concerns` (the countercase/gaps_summary merged into only the
+-- concerns that actually matter, not a fully worked adversarial essay)
+-- and `requirement_coverage` (a compact tally plus only the requirements
+-- genuinely at risk, replacing a full per-requirement JSON array).
+-- `fit_score`/`fit_tier`/`suggested_action` - the actual filtering signal
+-- PB-002's calibration data depends on - are untouched. Old rows keep
+-- their original columns' content unchanged; nothing is backfilled.
 CREATE TABLE IF NOT EXISTS evaluations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     opportunity_id INTEGER NOT NULL REFERENCES opportunities(id),
     fit_summary TEXT NOT NULL,
-    distinctiveness TEXT NOT NULL,
+    distinctiveness TEXT,
     gates_summary TEXT NOT NULL,
-    countercase TEXT NOT NULL,          -- required even when fit looks strong (PB-009)
-    requirement_matches TEXT NOT NULL,  -- JSON: [{requirement, match_quality, rationale, evidence_node_ids}]
+    countercase TEXT,
+    requirement_matches TEXT,           -- JSON: [{requirement, match_quality, rationale, evidence_node_ids}] - pre-PB-053 rows only
     gaps_summary TEXT,
+    key_concerns TEXT,                  -- PB-053
+    requirement_coverage TEXT,          -- PB-053
     fit_score INTEGER,                  -- 1-10, ranking aid only - not the verdict (PB-019)
     fit_tier TEXT,                      -- 'strong_match' | 'stretch' | 'mismatch' (PB-019)
     suggested_action TEXT NOT NULL,     -- 'admit' | 'reject' | 'flag' (PB-009)
@@ -512,6 +526,56 @@ def init_db(db_path: Path = DB_PATH) -> None:
                     (old_row[0],),
                 )
             conn.execute("DROP TABLE mailbox_state_pb046_old")
+
+        # PB-053: distinctiveness/countercase/requirement_matches were
+        # NOT NULL - the leaner evaluation spec no longer always
+        # populates them, so the constraint has to relax. A NOT NULL
+        # change also can't go through _COLUMN_MIGRATIONS (add-only);
+        # detected by `distinctiveness` still being NOT NULL, migrated
+        # via the same rebuild-and-copy pattern as PB-046, preserving
+        # every existing row exactly, including its own historical
+        # column values.
+        eval_columns = {
+            row[1]: row for row in conn.execute("PRAGMA table_info(evaluations)")
+        }
+        if eval_columns and eval_columns["distinctiveness"][3] == 1:  # notnull flag
+            conn.execute("ALTER TABLE evaluations RENAME TO evaluations_pb053_old")
+            conn.execute(
+                """
+                CREATE TABLE evaluations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    opportunity_id INTEGER NOT NULL REFERENCES opportunities(id),
+                    fit_summary TEXT NOT NULL,
+                    distinctiveness TEXT,
+                    gates_summary TEXT NOT NULL,
+                    countercase TEXT,
+                    requirement_matches TEXT,
+                    gaps_summary TEXT,
+                    key_concerns TEXT,
+                    requirement_coverage TEXT,
+                    fit_score INTEGER,
+                    fit_tier TEXT,
+                    suggested_action TEXT NOT NULL,
+                    human_decision TEXT,
+                    decided_at TEXT,
+                    source TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO evaluations
+                    (id, opportunity_id, fit_summary, distinctiveness, gates_summary,
+                     countercase, requirement_matches, gaps_summary, fit_score,
+                     fit_tier, suggested_action, human_decision, decided_at, source, created_at)
+                SELECT id, opportunity_id, fit_summary, distinctiveness, gates_summary,
+                       countercase, requirement_matches, gaps_summary, fit_score,
+                       fit_tier, suggested_action, human_decision, decided_at, source, created_at
+                FROM evaluations_pb053_old
+                """
+            )
+            conn.execute("DROP TABLE evaluations_pb053_old")
 
         conn.commit()
     finally:

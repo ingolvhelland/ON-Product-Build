@@ -82,11 +82,11 @@ async def list_evidence_graph(args: dict) -> dict:
     "list_top_evaluations",
     "List the highest-scoring evaluations recorded so far, across every "
     "opportunity regardless of how it was found - manual entry or a "
-    "previous scan. Each shows fit_summary, distinctiveness, and "
-    "requirement_matches - use these as a live signal for what to search "
-    "for MORE of. Empty or short means little evaluation history exists "
-    "yet - lean on list_evidence_graph directly instead of over-narrowing "
-    "to a small sample.",
+    "previous scan. Each shows fit_summary and its requirement coverage - "
+    "use these as a live signal for what to search for MORE of. Empty or "
+    "short means little evaluation history exists yet - lean on "
+    "list_evidence_graph directly instead of over-narrowing to a small "
+    "sample.",
     {},
 )
 async def list_top_evaluations(args: dict) -> dict:
@@ -98,13 +98,23 @@ async def list_top_evaluations(args: dict) -> dict:
             ]
         }
     lines = []
-    for title, organisation, fit_summary, distinctiveness, requirement_matches, fit_score, fit_tier in rows:
+    for (
+        title, organisation, fit_summary, distinctiveness,
+        requirement_matches, key_concerns, requirement_coverage,
+        fit_score, fit_tier,
+    ) in rows:
+        # PB-053: an evaluation has either the original fields or the
+        # leaner replacements, never both - use whichever is populated.
+        coverage_line = requirement_coverage if requirement_coverage is not None else requirement_matches
+        distinctiveness_line = (
+            f"  Distinctiveness: {distinctiveness}\n" if key_concerns is None else ""
+        )
         lines.append(
             f"- {title} ({organisation or 'unknown org'}) - fit_score={fit_score}, "
             f"fit_tier={fit_tier}\n"
             f"  Fit summary: {fit_summary}\n"
-            f"  Distinctiveness: {distinctiveness}\n"
-            f"  Requirement matches: {requirement_matches}"
+            f"{distinctiveness_line}"
+            f"  Requirement coverage: {coverage_line}"
         )
     return {"content": [{"type": "text", "text": "\n".join(lines)}]}
 
@@ -206,7 +216,7 @@ Call list_evidence_graph once.
 
 STEP 2 - Learn from evaluation history, if any exists.
 Call list_top_evaluations. If it returns real results, treat their
-fit_summary/distinctiveness/requirement_matches as a live signal for
+fit_summary and requirement coverage as a live signal for
 what to search for MORE of - but do not over-narrow to only that: also
 search based on the evidence graph directly, especially when little or
 no evaluation history exists yet, so you keep discovering breadth rather
