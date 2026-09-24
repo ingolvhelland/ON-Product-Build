@@ -28,14 +28,19 @@ Safety guarantees, by construction, not by convention:
   anything else - it only decides which opportunity a message belongs to
   and hands it to `onbuild.agents.outcome`, which is where classification
   and (since PB-040) direct application actually happen.
-- Zero or multiple candidate matches are never guessed at - the message
+- Zero or multiple candidate matches are never guessed at. The message
   first goes through `onbuild.agents.scan`'s mailbox-extraction entry
   point (PB-042: many companies ask permission to send future
   opportunities on application, so this inbox will accumulate exactly
-  those), and only if that finds nothing is it held in
-  `unmatched_mailbox_messages` for manual resolution - never silently
-  dropped either way (PB-004's discovery-capture discipline, applied to
-  live mail).
+  those). If that finds nothing, it then tries
+  `outcome.detect_external_application` (PB-050: it might be a receipt
+  for an application Ingolv sent entirely outside this system - a quick
+  LinkedIn Easy Apply, a direct email - auto-captured but flagged
+  unconfirmed via `onbuild.confirm_captured_applications`, never
+  silently trusted). Only if none of that finds anything is the message
+  held in `unmatched_mailbox_messages` for manual resolution - never
+  silently dropped, whichever path it takes (PB-004's discovery-capture
+  discipline, applied to live mail).
 
 Checks every folder in FOLDERS (PB-046), not only INBOX - Ingolv routes
 LinkedIn's own job-alert emails to a dedicated Gmail label rather than
@@ -204,18 +209,25 @@ async def _process_message(uid: int, msg: email.message.Message, folder: str) ->
         # PB-042: not every unmatched message is outcome-relevant at all -
         # a company Ingolv already applied to often asks permission to
         # send future opportunities, and those land here too, since
-        # they're not about any pending application. Try discovery first;
-        # only fall back to holding it for manual outcome-review if
-        # nothing was actually found (a genuinely ambiguous or unrelated
-        # message still needs that path, unchanged).
+        # they're not about any pending application. Try discovery first.
         recorded_ids = await scan.extract_from_message(message_text, sender)
         if recorded_ids:
             print(f"    -> discovered {len(recorded_ids)} new candidate opportunity(ies): "
                   f"{', '.join(f'#{i}' for i in recorded_ids)}")
         else:
-            evidence_ops.insert_unmatched_message(
-                uid, sender, subject, message_text, json.dumps(matched_ids), received_at
-            )
+            # PB-050: it might instead be a receipt for an application
+            # Ingolv sent entirely outside this system (a quick LinkedIn
+            # Easy Apply, a direct email) - auto-capture it, flagged for
+            # confirmation, rather than let it fall straight to unmatched.
+            captured_ids = await outcome.detect_external_application(message_text, sender)
+            if captured_ids:
+                print(f"    -> captured {len(captured_ids)} external application(s) "
+                      f"pending confirmation: {', '.join(f'#{i}' for i in captured_ids)} - "
+                      f"run onbuild.confirm_captured_applications")
+            else:
+                evidence_ops.insert_unmatched_message(
+                    uid, sender, subject, message_text, json.dumps(matched_ids), received_at
+                )
 
     evidence_ops.update_mailbox_last_uid(uid, folder)
 

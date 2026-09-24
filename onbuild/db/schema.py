@@ -120,6 +120,17 @@ CREATE TABLE IF NOT EXISTS identity_core (
 -- not folded into `lifecycle_status`, since selection doesn't remove an
 -- opportunity from deadline enforcement or from `onbuild.overview` the
 -- way 'closed'/'on_hold' do - it coexists with `lifecycle_status IS NULL`.
+-- `auto_captured_at` (PB-050) marks an opportunity `onbuild.mailbox`
+-- created on its own, from a receipt/confirmation message for an
+-- application Ingolv sent entirely outside this system (a quick
+-- LinkedIn Easy Apply, a direct email) - recognized, not witnessed, so
+-- it isn't trusted the way a human's own `onbuild.register_external_
+-- application` already is. Set at capture time alongside
+-- `lifecycle_status='submitted_pending_outcome'`; cleared by
+-- `onbuild.confirm_captured_applications` once Ingolv actually confirms
+-- it's real (from then on indistinguishable from a manually-registered
+-- external application), or the opportunity is closed with a note if
+-- it turns out to have been a misread.
 CREATE TABLE IF NOT EXISTS opportunities (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
@@ -131,6 +142,7 @@ CREATE TABLE IF NOT EXISTS opportunities (
     application_deadline TEXT,          -- ISO date (PB-032); NULL if not stated or not yet captured
     lifecycle_note TEXT,
     selected_at TEXT,                   -- ISO datetime (PB-039); NULL until chosen from the admitted-ranked list
+    auto_captured_at TEXT,              -- ISO datetime (PB-050); NULL unless auto-captured and still unconfirmed
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -435,6 +447,7 @@ _COLUMN_MIGRATIONS = {
         ("application_deadline", "TEXT"),
         ("lifecycle_note", "TEXT"),
         ("selected_at", "TEXT"),
+        ("auto_captured_at", "TEXT"),
     ],
     "applications": [
         ("submitted_at", "TEXT"),

@@ -3,6 +3,16 @@ Outcome agent: classifies one captured message about an already-submitted
 application. See PRODUCT_BUILD_ANCHOR.md's "Application pipeline, detailed"
 section and Log PB-022/PB-027/PB-029 for the design this follows.
 
+A second, narrower entry point - `detect_external_application` (PB-050)
+- has a different job: given a message that isn't about any tracked
+opportunity at all, recognize whether it's a receipt confirming an
+application Ingolv sent entirely outside this system (a quick LinkedIn
+Easy Apply, a direct email), and if so auto-capture it as a new
+opportunity, flagged unconfirmed until he actually reviews it via
+`onbuild.confirm_captured_applications`. Called directly by
+`onbuild.mailbox` when neither an outcome match nor a new-posting
+extraction (`onbuild.agents.scan`) found anything.
+
 Only ever runs against an opportunity whose lifecycle_status is
 'submitted_pending_outcome' or 'awaiting_action', OR whose latest
 application was approved but never confirmed submitted (PB-049) -
@@ -390,6 +400,95 @@ async def classify_message(opportunity_id: int, message_text: str) -> None:
 
     async for message in query(prompt=prompt, options=options):
         print(message)
+
+
+SOURCE_TAG_EXTERNAL_CAPTURE = "outcome: auto_captured_external_application"
+
+# Set by detect_external_application() before each run, appended to by
+# capture_external_application's handler - same reasoning as
+# onbuild.agents.scan's _LAST_RECORDED_IDS (PB-042).
+_CAPTURED_EXTERNAL_IDS: list[int] = []
+
+
+@tool(
+    "capture_external_application",
+    "Record an application that was confirmed sent, entirely outside "
+    "this system, for a company/role not currently tracked. Call this "
+    "only when the message genuinely confirms Ingolv's OWN application "
+    "was received or submitted - never for a job posting or alert "
+    "(that belongs to a different agent) and never for anything already "
+    "tracked here. Deduplicated automatically - if it's already there, "
+    "nothing new is recorded and you're told so.",
+    {
+        "title": str,
+        "organisation": str,
+        "receipt_text": str,  # the confirmation message's own text, as fully as possible - not a summary
+    },
+)
+async def capture_external_application(args: dict) -> dict:
+    opportunity_id = evidence_ops.capture_external_application(
+        args["title"], args["organisation"], args["receipt_text"], SOURCE_TAG_EXTERNAL_CAPTURE
+    )
+    if opportunity_id is None:
+        text = (
+            f"Already tracked - '{args['title']}' at '{args['organisation']}' "
+            f"matches an existing opportunity. Nothing new captured."
+        )
+    else:
+        _CAPTURED_EXTERNAL_IDS.append(opportunity_id)
+        text = (
+            f"Captured external application as opportunity #{opportunity_id}: "
+            f"'{args['title']}' at '{args['organisation']}' - flagged for "
+            f"confirmation via onbuild.confirm_captured_applications."
+        )
+    return {"content": [{"type": "text", "text": text}]}
+
+
+DETECT_EXTERNAL_SYSTEM_PROMPT = """\
+You are given one captured email that did not match any of Ingolv's
+pending applications, and did not turn out to describe any new job
+posting either. Your only remaining job: determine whether this message
+confirms that Ingolv HIMSELF sent an application somewhere that isn't
+tracked in this system at all - a receipt or confirmation from an ATS,
+portal, or company, for an application he made outside this system (a
+quick "Easy Apply" on LinkedIn, a direct email, anything not run
+through this pipeline).
+
+If it genuinely confirms his own application was received or submitted,
+call capture_external_application with the role title, the organisation,
+and the confirmation message's own text (as fully as possible, not a
+summary).
+
+If it does not - a job alert, a marketing email, spam, anything not
+about an application Ingolv himself actually made - do not call
+anything at all. Do not guess at or invent one.
+"""
+
+
+async def detect_external_application(message_text: str, sender: str) -> list[int]:
+    global _CAPTURED_EXTERNAL_IDS
+    init_db()
+    _CAPTURED_EXTERNAL_IDS = []
+    server = create_sdk_mcp_server(
+        name="outcome_capture",
+        tools=[capture_external_application],
+    )
+    options = ClaudeAgentOptions(
+        system_prompt=DETECT_EXTERNAL_SYSTEM_PROMPT,
+        mcp_servers={"outcome_capture": server},
+        strict_mcp_config=True,
+        tools=[],  # no web access at all - detection from given text only
+        setting_sources=[],
+        allowed_tools=["mcp__outcome_capture__capture_external_application"],
+        permission_mode="bypassPermissions",
+        max_turns=20,
+    )
+
+    prompt = f"EMAIL FROM: {sender}\n\n{message_text}"
+    async for message in query(prompt=prompt, options=options):
+        print(message)
+
+    return list(_CAPTURED_EXTERNAL_IDS)
 
 
 def main() -> None:

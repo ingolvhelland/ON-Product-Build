@@ -97,7 +97,10 @@ there is no track positioning as a persisted, versioned table (PB-008/
 PB-019) - track is a plain string for now, deliberately left unset by the
 scanning agent and assigned later at evaluation time; no recurring
 schedule for `onbuild.agents.scan` any more than for `onbuild.mailbox` -
-both run a single pass on demand today; no interface of
+both run a single pass on demand today; auto-captured external
+applications (PB-050) are backfilled only when Ingolv happens to
+mention one - there is no retroactive re-scan of mailbox history for
+older receipts that predate this feature; no interface of
 any kind (PB-034); no application-portal browser automation (PB-025 -
 deliberately not extended to live application systems the way mailbox
 access was, given the different safety stakes of an agent that could
@@ -152,6 +155,7 @@ python -m onbuild.hold_opportunity <opportunity_id> "<note>"  # mark an opportun
 python -m onbuild.relist_opportunity <opportunity_id> <new_deadline>  # reopen a closed or on-hold opportunity with a new deadline
 python -m onbuild.close_opportunity <opportunity_id> "<note>"  # manually close an opportunity that's dead for a reason other than its deadline
 python -m onbuild.pipeline_status                   # read-only: every opportunity's current pipeline stage and next action
+python -m onbuild.confirm_captured_applications     # confirm/reject an application onbuild.mailbox auto-captured from a receipt
 python -m onbuild.digest                            # batch-approve/strike byproduct evidence live since the last run
 ```
 
@@ -238,17 +242,32 @@ spot - and on zero or multiple matches it holds the message in
 directly and re-run `outcome` manually once the right opportunity is
 clear. A mismatch here is corrected via `onbuild.outcome_decision
 --override`, same as any other wrong classification. On zero or
-multiple matches (PB-042), before holding the message, it first tries
-`scan.extract_from_message` - many companies ask permission to send
-future-opportunity emails on application, and those land in this same
-inbox; if that finds real postings, they become candidate opportunities
-and the message is done, otherwise it falls through to the unmatched
+multiple matches, before holding the message, it tries two things in
+order: `scan.extract_from_message` (PB-042 - many companies ask
+permission to send future-opportunity emails on application, and those
+land in this same inbox; a real posting found this way becomes a
+candidate opportunity), then, if that finds nothing,
+`outcome.detect_external_application` (PB-050 - the message might
+instead be a receipt for an application Ingolv sent entirely outside
+this system, like a LinkedIn "Easy Apply" or a direct email; if so it's
+auto-captured, flagged for confirmation via
+`onbuild.confirm_captured_applications` rather than trusted outright).
+Only if neither finds anything does it fall through to the unmatched
 pile exactly as before. Safe to run
 repeatedly - it
 tracks its own progress in the database and only ever looks at mail newer
 than what it already processed. Runs a single pass each time you call it;
 wiring it to run on a recurring schedule is a separate choice, not made
 here.
+
+`confirm_captured_applications` (PB-050) is the human gate over what
+`onbuild.mailbox` auto-captures on its own - recognizing a receipt
+isn't infallible, so nothing it creates is trusted until Ingolv actually
+looks at it. `confirm` clears the flag (from then on indistinguishable
+from an application registered by hand via
+`onbuild.register_external_application`); `reject` closes it with a
+note, since an unconfirmed auto-capture that turns out to be a misread
+was never established as real in the first place.
 
 `agents.scan` (PB-042) is the discovery agent - the "found by scan
 agent" entry point named from the start of this project, built last

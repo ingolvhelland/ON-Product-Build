@@ -513,12 +513,14 @@ def fetch_all_opportunities() -> list[tuple]:
     across the whole pipeline, not just the admitted-ranked slice
     `fetch_overview` covers. Includes `selected_at` (PB-039) so the
     registry can distinguish admitted-not-yet-chosen from chosen-but-
-    not-yet-briefed."""
+    not-yet-briefed, and `auto_captured_at` (PB-050) so it can flag an
+    auto-captured, still-unconfirmed external application distinctly
+    from an ordinary `submitted_pending_outcome` one."""
     conn = connect()
     try:
         return conn.execute(
-            "SELECT id, title, organisation, lifecycle_status, lifecycle_note, selected_at "
-            "FROM opportunities ORDER BY id"
+            "SELECT id, title, organisation, lifecycle_status, lifecycle_note, "
+            "selected_at, auto_captured_at FROM opportunities ORDER BY id"
         ).fetchall()
     finally:
         conn.close()
@@ -1017,6 +1019,136 @@ def insert_external_application(
         application_id = cur.lastrowid
         conn.commit()
         return opportunity_id, brief_id, application_id
+    finally:
+        conn.close()
+
+
+def capture_external_application(
+    title: str, organisation: str, receipt_text: str, source: str
+) -> int | None:
+    """Auto-captures an application confirmed sent entirely outside this
+    system (PB-050) - a receipt/confirmation message for something
+    never registered here at all (a quick LinkedIn Easy Apply, a direct
+    email). Same insertion shape as `insert_external_application`
+    (PB-031: opportunity + placeholder brief + application,
+    `submitted_pending_outcome` immediately, since in real life it
+    already is), but flagged via `auto_captured_at` so it surfaces for
+    confirmation (`onbuild.confirm_captured_applications`) rather than
+    being silently trusted the way a human's own manual registration
+    already is. Deduplicated against everything already tracked, by any
+    route; returns None if it's a duplicate (nothing inserted)."""
+    if opportunity_exists(title, organisation):
+        return None
+    conn = connect()
+    try:
+        cur = conn.execute(
+            "INSERT INTO opportunities "
+            "(title, organisation, raw_text, source, lifecycle_status, auto_captured_at) "
+            "VALUES (?, ?, ?, ?, 'submitted_pending_outcome', datetime('now'))",
+            (
+                title,
+                organisation,
+                "(posting text not available - auto-captured from a receipt "
+                "confirmation, not discovered as a listing)",
+                source,
+            ),
+        )
+        opportunity_id = cur.lastrowid
+
+        placeholder = (
+            "N/A - auto-captured from a receipt confirmation; no brief was written"
+        )
+        cur = conn.execute(
+            "INSERT INTO briefs (opportunity_id, company_profile, field_positioning, "
+            "position_fit, candidacy_fit_summary, strategic_approach, human_decision, source) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'continue', ?)",
+            (opportunity_id, placeholder, placeholder, placeholder, placeholder, placeholder, source),
+        )
+        brief_id = cur.lastrowid
+
+        receipt_note = (
+            f"RECEIPT MESSAGE CAPTURED (not the actual application sent):\n\n{receipt_text}"
+        )
+        cur = conn.execute(
+            "INSERT INTO applications (opportunity_id, brief_id, application_format_assessment, "
+            "tailored_cv, cover_letter_or_message, application_form_data, "
+            "portfolio_recommendation, human_decision, submitted_at, source) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 'approve', datetime('now'), ?)",
+            (
+                opportunity_id,
+                brief_id,
+                "Auto-captured external application - only a receipt/confirmation "
+                "message was seen, not the actual application content.",
+                receipt_note,
+                receipt_note,
+                "N/A - external application, auto-captured",
+                "N/A - external application, auto-captured",
+                source,
+            ),
+        )
+        conn.commit()
+        return opportunity_id
+    finally:
+        conn.close()
+
+
+def fetch_captured_applications_pending_confirmation() -> list[tuple]:
+    """Auto-captured external applications (PB-050) awaiting Ingolv's
+    confirmation that they're real, not a misread -
+    `onbuild.confirm_captured_applications`'s pending list."""
+    conn = connect()
+    try:
+        return conn.execute(
+            """
+            SELECT o.id, o.title, o.organisation, o.auto_captured_at,
+                   a.cover_letter_or_message
+            FROM opportunities o
+            JOIN applications a ON a.id = (
+                SELECT MAX(id) FROM applications WHERE opportunity_id = o.id
+            )
+            WHERE o.auto_captured_at IS NOT NULL
+            ORDER BY o.auto_captured_at
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def confirm_captured_application(opportunity_id: int) -> None:
+    """Ingolv confirms an auto-captured application is real (PB-050) -
+    clears `auto_captured_at`; from this point it's indistinguishable
+    from any other `submitted_pending_outcome` opportunity."""
+    conn = connect()
+    try:
+        conn.execute(
+            "UPDATE opportunities SET auto_captured_at=NULL WHERE id=?",
+            (opportunity_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def reject_captured_application(opportunity_id: int, note: str | None) -> None:
+    """Ingolv rejects an auto-captured application as a misread (PB-050)
+    - not a real application, so it's closed with a clear note rather
+    than left masquerading as a live `submitted_pending_outcome`
+    opportunity. Deliberately not routed through
+    `onbuild.close_opportunity`'s guard, which exists to protect a
+    genuinely real recorded outcome from being overwritten - an
+    unconfirmed auto-capture was never confirmed real in the first
+    place, so there's nothing there to protect."""
+    conn = connect()
+    try:
+        conn.execute(
+            "UPDATE opportunities SET lifecycle_status='closed', "
+            "lifecycle_note=?, auto_captured_at=NULL WHERE id=?",
+            (
+                note or "Auto-capture rejected - misread, not an actual application.",
+                opportunity_id,
+            ),
+        )
+        conn.commit()
     finally:
         conn.close()
 

@@ -33,6 +33,7 @@ class OpportunitySnapshot:
     lifecycle_status: str | None
     lifecycle_note: str | None
     selected_at: str | None
+    auto_captured_at: str | None
     evaluation_id: int | None
     evaluation_decision: str | None
     brief_id: int | None
@@ -61,7 +62,7 @@ def _fetch_snapshot(opportunity_id: int) -> OpportunitySnapshot:
     opp_id, title, organisation, _raw_text, _source, _track = opportunity
 
     all_opps = {row[0]: row for row in evidence_ops.fetch_all_opportunities()}
-    _id, _title, _org, lifecycle_status, lifecycle_note, selected_at = all_opps[opportunity_id]
+    _id, _title, _org, lifecycle_status, lifecycle_note, selected_at, auto_captured_at = all_opps[opportunity_id]
 
     evaluation = evidence_ops.fetch_latest_evaluation_decision(opportunity_id)
     evaluation_id, evaluation_decision = evaluation if evaluation else (None, None)
@@ -88,6 +89,7 @@ def _fetch_snapshot(opportunity_id: int) -> OpportunitySnapshot:
         lifecycle_status=lifecycle_status,
         lifecycle_note=lifecycle_note,
         selected_at=selected_at,
+        auto_captured_at=auto_captured_at,
         evaluation_id=evaluation_id,
         evaluation_decision=evaluation_decision,
         brief_id=brief_id,
@@ -131,6 +133,14 @@ STAGES: list[Stage] = [
         gate=None,
         matches=lambda s: s.lifecycle_status == "awaiting_action",
         next_action=lambda s: "Manual - fulfill whatever the message actually asked for.",
+    ),
+    Stage(
+        key="auto_captured_pending_confirmation",
+        description="Auto-captured from a receipt message - not yet confirmed as real.",
+        agent=None,
+        gate="onbuild.confirm_captured_applications",
+        matches=lambda s: s.lifecycle_status == "submitted_pending_outcome" and s.auto_captured_at is not None,
+        next_action=lambda s: "Run onbuild.confirm_captured_applications to confirm or reject this.",
     ),
     Stage(
         key="submitted_pending_outcome",
