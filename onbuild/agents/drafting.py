@@ -237,6 +237,19 @@ Produce these fields, in this order of reasoning:
    captured; assuming a standard CV plus cover letter upload since nothing
    more specific is known") rather than presenting a guess as fact.
 
+   A real, observed failure mode (PB-046): a posting that names a person
+   or email "for more information or questions" is naming a contact for
+   QUESTIONS, not a submission channel - do not treat it as one unless
+   the posting separately, explicitly says to send the application/CV/
+   materials to that same address. A posting that names an "Apply" button,
+   a portal, or an ATS (e.g. "apply via our careers page") but ALSO gives
+   a contact email for questions has two different channels for two
+   different purposes; sending the actual application to the questions
+   contact is wrong even when it looks like the only address given. When
+   the posting doesn't clearly state where to actually submit, say so
+   plainly here rather than defaulting to whatever email address appears
+   anywhere in the text.
+
 2. tailored_cv: a CV shaped by the brief's strategic_approach - what to
    lead with, how to cover gaps where realistic, what to acknowledge
    openly. Grounded in approved evidence only. This is a different job from
