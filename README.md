@@ -1,4 +1,5 @@
 # ON Product Build
+<img width="5150" height="3253" alt="ON_COMPLETE_SYSTEM_MAP_LINKEDIN" src="https://github.com/user-attachments/assets/07a8b10c-42e6-48e1-8527-191da16ae80d" />
 
 The actual codebase for Opportunity Navigation's rebuild. The governing design
 record — why every decision here was made, in what order, and what it does
