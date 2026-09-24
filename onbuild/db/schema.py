@@ -298,15 +298,19 @@ CREATE TABLE IF NOT EXISTS applications (
 -- deferred application-portal browser automation): a message is captured
 -- and handed to this agent as a plain text file, not read live from a
 -- real inbox.
--- Live-mailbox watermark (PB-030) - a singleton row tracking the highest
--- IMAP UID already processed, so `onbuild.mailbox` never reprocesses a
--- message. Not IMAP's own Seen flag: the mailbox is opened strictly
--- read-only and fetched via BODY.PEEK, so nothing is ever marked read on
--- the live account itself - the database is the only place progress is
--- tracked, per the Toolkit invariant (PB-007) that the database is the
--- sole source of truth.
+-- Live-mailbox watermark (PB-030, keyed per folder since PB-046) - the
+-- highest IMAP UID already processed in a given folder, so
+-- `onbuild.mailbox` never reprocesses a message. Keyed by folder because
+-- IMAP UIDs are only unique within one mailbox/folder - the same UID
+-- number in INBOX and in a label like "LinkedIn Jobs" refers to two
+-- unrelated messages, so a single global watermark would silently skip
+-- or misalign one of them. Not IMAP's own Seen flag: every folder is
+-- opened strictly read-only and fetched via BODY.PEEK, so nothing is
+-- ever marked read on the live account itself - the database is the
+-- only place progress is tracked, per the Toolkit invariant (PB-007)
+-- that the database is the sole source of truth.
 CREATE TABLE IF NOT EXISTS mailbox_state (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
+    folder TEXT PRIMARY KEY,
     last_processed_uid INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -457,6 +461,34 @@ def init_db(db_path: Path = DB_PATH) -> None:
                     conn.execute(
                         f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"
                     )
+
+        # PB-046: mailbox_state moved from a singleton (id=1, INBOX-only)
+        # to a folder-keyed table - a primary-key shape change, which
+        # _COLUMN_MIGRATIONS (add-only) can't express. Detected by the
+        # old `id` column's absence of a `folder` column; migrated
+        # in place, preserving whatever progress already existed as the
+        # 'INBOX' row so nothing already processed gets reprocessed.
+        mailbox_state_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(mailbox_state)")
+        }
+        if mailbox_state_columns and "folder" not in mailbox_state_columns:
+            old_row = conn.execute(
+                "SELECT last_processed_uid FROM mailbox_state WHERE id = 1"
+            ).fetchone()
+            conn.execute("ALTER TABLE mailbox_state RENAME TO mailbox_state_pb046_old")
+            conn.execute(
+                "CREATE TABLE mailbox_state ("
+                "folder TEXT PRIMARY KEY, "
+                "last_processed_uid INTEGER NOT NULL DEFAULT 0, "
+                "updated_at TEXT NOT NULL DEFAULT (datetime('now')))"
+            )
+            if old_row:
+                conn.execute(
+                    "INSERT INTO mailbox_state (folder, last_processed_uid) VALUES ('INBOX', ?)",
+                    (old_row[0],),
+                )
+            conn.execute("DROP TABLE mailbox_state_pb046_old")
+
         conn.commit()
     finally:
         conn.close()

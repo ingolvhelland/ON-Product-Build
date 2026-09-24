@@ -1102,26 +1102,30 @@ def insert_interview_prep(
         conn.close()
 
 
-def fetch_mailbox_last_uid() -> int:
+def fetch_mailbox_last_uid(folder: str = "INBOX") -> int:
+    """Per-folder watermark (PB-046) - IMAP UIDs are only unique within
+    one folder, so INBOX and a label like "LinkedIn Jobs" each need
+    their own progress marker."""
     conn = connect()
     try:
         row = conn.execute(
-            "SELECT last_processed_uid FROM mailbox_state WHERE id = 1"
+            "SELECT last_processed_uid FROM mailbox_state WHERE folder = ?",
+            (folder,),
         ).fetchone()
         return row[0] if row else 0
     finally:
         conn.close()
 
 
-def update_mailbox_last_uid(uid: int) -> None:
+def update_mailbox_last_uid(uid: int, folder: str = "INBOX") -> None:
     conn = connect()
     try:
         conn.execute(
-            "INSERT INTO mailbox_state (id, last_processed_uid, updated_at) "
-            "VALUES (1, ?, datetime('now')) "
-            "ON CONFLICT(id) DO UPDATE SET last_processed_uid=excluded.last_processed_uid, "
+            "INSERT INTO mailbox_state (folder, last_processed_uid, updated_at) "
+            "VALUES (?, ?, datetime('now')) "
+            "ON CONFLICT(folder) DO UPDATE SET last_processed_uid=excluded.last_processed_uid, "
             "updated_at=datetime('now')",
-            (uid,),
+            (folder, uid),
         )
         conn.commit()
     finally:

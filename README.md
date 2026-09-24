@@ -221,7 +221,11 @@ be the exception, not the norm.
 to generate an App Password; never the account's real password). It is
 strictly read-only by construction: the mailbox is opened in read-only
 mode and every fetch uses `BODY.PEEK[]`, so nothing about the live account
-ever changes, and there is no send capability anywhere in it. It matches
+ever changes, and there is no send capability anywhere in it. It checks
+every folder in `onbuild.mailbox.FOLDERS` (PB-046 - currently `INBOX`
+and `LinkedIn Jobs`, since Ingolv routes LinkedIn's own job-alert mail
+to a dedicated label), each with its own independent watermark since
+IMAP UIDs are only unique within one folder. It matches
 each new message to a candidate opportunity by organisation name; on a
 single confident match it calls `outcome` directly - which, since
 PB-040, may itself change that opportunity's `lifecycle_status` on the

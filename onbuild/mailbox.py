@@ -37,15 +37,23 @@ Safety guarantees, by construction, not by convention:
   dropped either way (PB-004's discovery-capture discipline, applied to
   live mail).
 
+Checks every folder in FOLDERS (PB-046), not only INBOX - Ingolv routes
+LinkedIn's own job-alert emails to a dedicated Gmail label rather than
+leaving them in INBOX, and a scan scoped to INBOX alone would never see
+them. Each folder gets its own watermark (`mailbox_state`, keyed by
+folder) since IMAP UIDs are only unique within one folder - the same
+UID number in two different folders is two unrelated messages.
+
 Credentials: GMAIL_ADDRESS / GMAIL_APP_PASSWORD in .env - an App Password
 (Google Account > Security > 2-Step Verification > App passwords), scoped
 to this one dedicated account and independently revocable, not the
 account's real login password.
 
-Run mode is a single pass over everything new since the last run - safe to
-run repeatedly, by hand or on a schedule; this module does not itself set
-up any recurring schedule (a standing/persistent configuration change is
-Ingolv's own call, not made here).
+Run mode is a single pass over everything new since the last run, in
+every configured folder - safe to run repeatedly, by hand or on a
+schedule; this module does not itself set up any recurring schedule (a
+standing/persistent configuration change is Ingolv's own call, not made
+here).
 
     python -m onbuild.mailbox
 """
@@ -110,6 +118,14 @@ def _extract_text_body(msg: email.message.Message) -> str:
     return payload.decode(charset, errors="replace")
 
 
+# Folders/labels this scans, in order (PB-046). Ingolv routes LinkedIn's
+# own job-alert emails to a dedicated Gmail label rather than leaving
+# them in INBOX - a plain, hardcoded list for now, same reasoning
+# scan_sources started as a config table only once more than one or two
+# sources existed; revisit the same way if more folders are ever needed.
+FOLDERS = ["INBOX", "LinkedIn Jobs"]
+
+
 def _connect() -> imaplib.IMAP4_SSL:
     address = os.environ.get("GMAIL_ADDRESS")
     app_password = os.environ.get("GMAIL_APP_PASSWORD")
@@ -120,10 +136,16 @@ def _connect() -> imaplib.IMAP4_SSL:
         )
     imap = imaplib.IMAP4_SSL(IMAP_HOST)
     imap.login(address, app_password)
+    return imap
+
+
+def _select_folder(imap: imaplib.IMAP4_SSL, folder: str) -> None:
     # readonly=True: IMAP refuses any STORE/EXPUNGE/DELETE in this mode -
     # the mailbox cannot be modified by this connection even by accident.
-    imap.select("INBOX", readonly=True)
-    return imap
+    # Always quoted - IMAP's own SELECT syntax needs it for a name with a
+    # space ("LinkedIn Jobs"), and quoting a single-word name like INBOX
+    # is equally valid, so one form covers every folder in FOLDERS.
+    imap.select(f'"{folder}"', readonly=True)
 
 
 def _fetch_new_messages(imap: imaplib.IMAP4_SSL, last_uid: int) -> list[tuple[int, email.message.Message]]:
@@ -157,7 +179,7 @@ def _match_opportunity(sender: str, subject: str, body: str, candidates: list[tu
     return matches
 
 
-async def _process_message(uid: int, msg: email.message.Message) -> None:
+async def _process_message(uid: int, msg: email.message.Message, folder: str) -> None:
     sender = _decode(msg.get("From"))
     subject = _decode(msg.get("Subject"))
     body = _extract_text_body(msg)
@@ -195,27 +217,30 @@ async def _process_message(uid: int, msg: email.message.Message) -> None:
                 uid, sender, subject, message_text, json.dumps(matched_ids), received_at
             )
 
-    evidence_ops.update_mailbox_last_uid(uid)
+    evidence_ops.update_mailbox_last_uid(uid, folder)
 
 
 async def scan_mailbox() -> None:
     init_db()
-    last_uid = evidence_ops.fetch_mailbox_last_uid()
     imap = _connect()
     try:
-        messages = _fetch_new_messages(imap, last_uid)
+        for folder in FOLDERS:
+            last_uid = evidence_ops.fetch_mailbox_last_uid(folder)
+            _select_folder(imap, folder)
+            messages = _fetch_new_messages(imap, last_uid)
+
+            print(f"\n--- {folder} ---")
+            if not messages:
+                print(f"No new messages since UID {last_uid}.")
+                continue
+
+            print(f"{len(messages)} new message(s) since UID {last_uid}.")
+            for uid, msg in messages:
+                await _process_message(uid, msg, folder)
+
+            print(f"Done with {folder}. Watermark advanced to UID {messages[-1][0]}.")
     finally:
         imap.logout()
-
-    if not messages:
-        print(f"No new messages since UID {last_uid}.")
-        return
-
-    print(f"{len(messages)} new message(s) since UID {last_uid}.")
-    for uid, msg in messages:
-        await _process_message(uid, msg)
-
-    print(f"\nDone. Watermark advanced to UID {messages[-1][0]}.")
 
 
 def main() -> None:
