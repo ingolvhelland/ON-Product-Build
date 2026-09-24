@@ -53,20 +53,25 @@ load_dotenv()
 SOURCE_TAG = "scan: candidate_opportunity"
 
 # Set by extract_from_message() before each run, appended to by
-# record_candidate_opportunity's handler - same module-level-slot pattern
-# as every other agent's _CURRENT_OPPORTUNITY_ID (PB-026). Lets
-# extract_from_message report back what it actually found, since the SDK
-# message stream itself isn't structured for a caller to read.
+# record_candidate_opportunity's/record_unverified_lead's handlers - same
+# module-level-slot pattern as every other agent's _CURRENT_OPPORTUNITY_ID
+# (PB-026). Lets extract_from_message report back what it actually
+# found, since the SDK message stream itself isn't structured for a
+# caller to read. Tracked separately (PB-052) since a verified candidate
+# and an unverified lead need different follow-up.
 _LAST_RECORDED_IDS: list[int] = []
+_LAST_LEAD_IDS: list[int] = []
 
 
 @tool(
     "list_evidence_graph",
-    "List everything currently recorded about the candidate: every "
-    "evidence node (any status) and every identity-core fact. Read-only. "
-    "Only treat 'approved' or 'provisional' items as real evidence. Call "
-    "this to ground search queries in who the candidate actually is, "
-    "especially when little or no evaluation history exists yet.",
+    "List currently approved/provisional evidence nodes and every "
+    "current identity-core fact. Read-only. Proposed/rejected items and "
+    "superseded identity facts are intentionally left out (PB-051 - "
+    "keeps this a manageable size as the graph grows). Descriptions are "
+    "shown in short form. Call this to ground search queries in who the "
+    "candidate actually is, especially when little or no evaluation "
+    "history exists yet.",
     {},
 )
 async def list_evidence_graph(args: dict) -> dict:
@@ -153,6 +158,42 @@ async def record_candidate_opportunity(args: dict) -> dict:
     return {"content": [{"type": "text", "text": text}]}
 
 
+@tool(
+    "record_unverified_lead",
+    "Record that a role MIGHT exist, when you found only a mention of "
+    "it - a job-alert stub, a search snippet, a 'view job' link - and "
+    "could not confirm the real posting itself (WebFetch failed, "
+    "returned a login wall or a generic listing page, or you have no "
+    "web access at all in this call). This is NOT a candidate ready for "
+    "evaluation - it's a pointer for Ingolv to find and add the real "
+    "posting himself if it looks worth pursuing. Deduplicated the same "
+    "way as record_candidate_opportunity.",
+    {
+        "title": str,
+        "organisation": str,
+        "source_url": str,  # the link to the actual posting, so Ingolv can find it himself
+        "note": str,  # why it couldn't be verified, if useful - otherwise ""
+    },
+)
+async def record_unverified_lead(args: dict) -> dict:
+    opportunity_id = evidence_ops.record_unverified_lead(
+        args["title"], args.get("organisation") or None, args["source_url"], args.get("note") or None
+    )
+    if opportunity_id is None:
+        text = (
+            f"Already tracked - '{args['title']}' at '{args.get('organisation')}' "
+            f"matches an existing opportunity. Nothing new recorded."
+        )
+    else:
+        _LAST_LEAD_IDS.append(opportunity_id)
+        text = (
+            f"Recorded unverified lead #{opportunity_id}: '{args['title']}' at "
+            f"'{args.get('organisation')}' - not ready for evaluation until the "
+            f"real posting is found and attached."
+        )
+    return {"content": [{"type": "text", "text": text}]}
+
+
 SCAN_SYSTEM_PROMPT = """\
 You are the scanning agent for a personal opportunity-navigation system.
 Your only job is discovery: find real candidate job postings and record
@@ -177,28 +218,41 @@ Call list_scan_sources.
 STEP 4 - Search the open web.
 Run several distinct WebSearch queries - some informed by what has
 scored well so far, some general, based on the evidence graph's own
-skills and career narrative directly.
+skills and career narrative directly. A search result is a LEAD, not a
+posting - it gives you a title, an organisation, and a link, not the
+actual posting content. Do not treat a search snippet as if it were
+the posting itself.
 
 STEP 5 - Check every active source directly.
-For each source from list_scan_sources, use WebFetch on its URL. Not
-every source will render usefully this way - some sites require a login
-or heavy JavaScript and will return nothing useful. If that happens,
-just move on; do not guess at content you cannot actually see.
+For each source from list_scan_sources, use WebFetch on its URL. This
+often returns a LIST of postings (titles and links on a job board's own
+listing page) rather than any one posting's actual content - that list
+is also just leads, the same as a search result.
 
-STEP 6 - Record every distinct posting you actually found.
-For each one, call record_candidate_opportunity with:
-- title: the actual job title
-- organisation: the hiring company or organisation's name
-- raw_text: the posting's own text, as fully and verbatim as you can
-  capture it - not a summary
-- source: where you found it (the URL, or the search query that
-  surfaced it)
-- application_deadline: the ISO date if the posting states one,
-  otherwise leave it empty
+STEP 6 - Verify every lead before deciding how to record it.
+For every lead from steps 4-5, use WebFetch on the specific posting's
+own URL (not just the search result or listing page) to try to read
+the real posting. This is the step that determines what you record:
 
-Do not skip a posting because it seems like a weak fit - that is not
-your judgment to make. Do not invent or guess at a posting you did not
-actually find. When you have exhausted your searches and sources, stop.
+- If WebFetch returns the actual posting - real responsibilities,
+  requirements, or a genuine job description, not just a title and a
+  login wall or a generic listing page - call record_candidate_opportunity
+  with the real content: title, organisation, raw_text (the posting's
+  own text, as fully and verbatim as you can capture it - not a
+  summary), source (the posting's own URL), application_deadline if
+  stated.
+- If WebFetch fails, requires a login, or returns nothing beyond what
+  you already had (a title, a company, a listing page, "N school
+  alumni") - call record_unverified_lead instead, with the title,
+  organisation, the posting's URL as source_url, and a short note on
+  why it couldn't be verified. Never call record_candidate_opportunity
+  for something you have not actually read - a title and a link are not
+  a posting, and a candidate ready for evaluation must be a real one.
+
+Do not skip a lead because it seems like a weak fit - that is not your
+judgment to make; record it (verified or not) either way. Do not invent
+or guess at posting content you did not actually see. When you have
+exhausted your searches and sources, stop.
 """
 
 
@@ -215,18 +269,35 @@ applications. It is most likely one of a few things:
 - something else entirely (a newsletter, an unrelated message, spam).
 
 You do not need to know which of these it is - just read the email and
-record whatever real postings it actually contains, regardless of how
-many there are or how many different companies they're from.
+record whatever it actually contains, regardless of how many roles
+there are or how many different companies they're from.
 
-Read the email. If it actually describes one or more distinct job
-postings or open positions, call record_candidate_opportunity once for
-each one, using the posting's own text (not a summary) for raw_text,
-the sender as the source (e.g. "mailbox: <sender>"), and the
-application_deadline if one is actually stated.
+You have no web access in this call - you can only judge what is
+already in the email text. This matters, because a LinkedIn digest
+(and most job-alert emails generally) very often contain nothing but a
+STUB per role - a title, a company, a location, "N school alumni," and
+a "View job" link - never the real posting's actual responsibilities
+or requirements. A stub is not a posting, no matter how confidently it
+names a real role.
 
-If the email does not describe any real posting, do not call anything
-at all. Do not guess at or invent a posting that is not actually
-described in the text.
+For each distinct role the email mentions, decide which of these it
+actually gives you, then call the matching tool exactly once per role:
+
+- The real posting's own substantive content (actual responsibilities,
+  requirements, a genuine description - this is rare in a digest, more
+  likely in a direct single-role email from one company): call
+  record_candidate_opportunity with the real content for raw_text (not
+  a summary), the sender as source (e.g. "mailbox: <sender>"), and the
+  application_deadline if stated.
+- Only a stub - title, company, and a link, nothing describing the
+  actual role: call record_unverified_lead instead, with the title,
+  organisation, the "View job" link as source_url, and a short note
+  (e.g. "LinkedIn digest stub - no posting content in the email").
+  Never call record_candidate_opportunity for a stub, and never invent
+  or expand it into what you imagine the real posting probably says.
+
+If the email describes no role at all (a newsletter, an unrelated
+message, spam), do not call anything.
 """
 
 
@@ -239,6 +310,7 @@ async def run_scan() -> None:
             list_top_evaluations,
             list_scan_sources,
             record_candidate_opportunity,
+            record_unverified_lead,
         ],
     )
     options = ClaudeAgentOptions(
@@ -254,13 +326,14 @@ async def run_scan() -> None:
             "mcp__scan__list_top_evaluations",
             "mcp__scan__list_scan_sources",
             "mcp__scan__record_candidate_opportunity",
+            "mcp__scan__record_unverified_lead",
         ],
         # Safe by construction: WebSearch/WebFetch are read-only against
-        # the public internet, same argument as brief.py. The only write
-        # path, record_candidate_opportunity, always lands as a bare
-        # 'candidate' opportunity - no evaluation, no admission, no track
-        # - so nothing this agent does moves anything further than any
-        # manual entry already could.
+        # the public internet, same argument as brief.py. Every write
+        # path lands as a bare 'candidate' opportunity or an unverified
+        # lead - no evaluation, no admission, no track - so nothing this
+        # agent does moves anything further than any manual entry
+        # already could.
         permission_mode="bypassPermissions",
         max_turns=80,
     )
@@ -269,13 +342,17 @@ async def run_scan() -> None:
         print(message)
 
 
-async def extract_from_message(message_text: str, sender: str) -> list[int]:
-    global _LAST_RECORDED_IDS
+async def extract_from_message(message_text: str, sender: str) -> tuple[list[int], list[int]]:
+    """Returns (recorded_candidate_ids, recorded_lead_ids) - PB-052 keeps
+    them separate since a verified candidate and an unverified lead need
+    different follow-up from the caller (`onbuild.mailbox`)."""
+    global _LAST_RECORDED_IDS, _LAST_LEAD_IDS
     init_db()
     _LAST_RECORDED_IDS = []
+    _LAST_LEAD_IDS = []
     server = create_sdk_mcp_server(
         name="scan_extract",
-        tools=[record_candidate_opportunity],
+        tools=[record_candidate_opportunity, record_unverified_lead],
     )
     options = ClaudeAgentOptions(
         system_prompt=EXTRACT_SYSTEM_PROMPT,
@@ -283,7 +360,10 @@ async def extract_from_message(message_text: str, sender: str) -> list[int]:
         strict_mcp_config=True,
         tools=[],  # no web access at all - extraction from given text only
         setting_sources=[],
-        allowed_tools=["mcp__scan_extract__record_candidate_opportunity"],
+        allowed_tools=[
+            "mcp__scan_extract__record_candidate_opportunity",
+            "mcp__scan_extract__record_unverified_lead",
+        ],
         permission_mode="bypassPermissions",
         max_turns=20,
     )
@@ -292,7 +372,7 @@ async def extract_from_message(message_text: str, sender: str) -> list[int]:
     async for message in query(prompt=prompt, options=options):
         print(message)
 
-    return list(_LAST_RECORDED_IDS)
+    return list(_LAST_RECORDED_IDS), list(_LAST_LEAD_IDS)
 
 
 def main() -> None:

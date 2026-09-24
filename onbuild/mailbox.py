@@ -210,10 +210,16 @@ async def _process_message(uid: int, msg: email.message.Message, folder: str) ->
         # a company Ingolv already applied to often asks permission to
         # send future opportunities, and those land here too, since
         # they're not about any pending application. Try discovery first.
-        recorded_ids = await scan.extract_from_message(message_text, sender)
+        recorded_ids, lead_ids = await scan.extract_from_message(message_text, sender)
         if recorded_ids:
             print(f"    -> discovered {len(recorded_ids)} new candidate opportunity(ies): "
                   f"{', '.join(f'#{i}' for i in recorded_ids)}")
+        elif lead_ids:
+            # PB-052: a real role was mentioned but never verified (a
+            # LinkedIn digest stub, most often) - recorded as a lead,
+            # not a candidate ready for evaluation.
+            print(f"    -> recorded {len(lead_ids)} unverified lead(s), not yet "
+                  f"ready for evaluation: {', '.join(f'#{i}' for i in lead_ids)}")
         else:
             # PB-050: it might instead be a receipt for an application
             # Ingolv sent entirely outside this system (a quick LinkedIn

@@ -197,6 +197,81 @@ def insert_candidate_opportunity(
     )
 
 
+def record_unverified_lead(
+    title: str, organisation: str | None, source_url: str, note: str | None
+) -> int | None:
+    """A scanning-agent write path distinct from `insert_candidate_opportunity`
+    (PB-052): for when only a MENTION of a role was found - a job-alert
+    stub, a search snippet, "N school alumni" and a link - never the
+    real posting itself. Every LinkedIn digest email in this system's
+    real history turned out to be exactly this shape, and all 41 got
+    recorded as full candidates and evaluated against nothing but a
+    one-line stub before this existed. Flags `lead_only_at` so
+    `onbuild.agents.evaluation` refuses to run against it and
+    `onbuild.pipeline` surfaces it as its own distinct stage, pointing
+    at `source_url` so Ingolv can find the real posting by hand if it's
+    worth pursuing. Same dedup as `insert_candidate_opportunity` -
+    returns None if this title+organisation is already tracked by any
+    route, including as an already-verified opportunity."""
+    if opportunity_exists(title, organisation):
+        return None
+    raw_text = (
+        f"(not yet verified - only a mention was found, not the real "
+        f"posting) {note or ''}\n\nFind the actual listing at: {source_url}"
+    ).strip()
+    opportunity_id = insert_opportunity(
+        title, organisation, raw_text, source_url, None, None
+    )
+    conn = connect()
+    try:
+        conn.execute(
+            "UPDATE opportunities SET lead_only_at=datetime('now') WHERE id=?",
+            (opportunity_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return opportunity_id
+
+
+def fetch_lead_status(opportunity_id: int) -> str | None:
+    """`lead_only_at` for one opportunity (PB-052) - `None` means it's a
+    real, verified posting (or was never a lead at all); a timestamp
+    means only a mention was ever found."""
+    conn = connect()
+    try:
+        row = conn.execute(
+            "SELECT lead_only_at FROM opportunities WHERE id=?", (opportunity_id,)
+        ).fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def attach_verified_posting(opportunity_id: int, raw_text: str, source: str | None) -> None:
+    """Upgrades a lead-only opportunity (PB-052) once the real posting
+    has actually been found - overwrites `raw_text` with the genuine
+    posting content and clears `lead_only_at`, so
+    `onbuild.agents.evaluation` will now run against it. `source`,
+    if given, replaces the lead's own link with wherever the real
+    posting was actually found (may be the same URL)."""
+    conn = connect()
+    try:
+        if source:
+            conn.execute(
+                "UPDATE opportunities SET raw_text=?, source=?, lead_only_at=NULL WHERE id=?",
+                (raw_text, source, opportunity_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE opportunities SET raw_text=?, lead_only_at=NULL WHERE id=?",
+                (raw_text, opportunity_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def fetch_top_evaluations(limit: int = 5) -> list[tuple]:
     """The highest-`fit_score` evaluations across every opportunity,
     regardless of source (PB-042) - context for the scanning agent's own
@@ -513,14 +588,16 @@ def fetch_all_opportunities() -> list[tuple]:
     across the whole pipeline, not just the admitted-ranked slice
     `fetch_overview` covers. Includes `selected_at` (PB-039) so the
     registry can distinguish admitted-not-yet-chosen from chosen-but-
-    not-yet-briefed, and `auto_captured_at` (PB-050) so it can flag an
+    not-yet-briefed, `auto_captured_at` (PB-050) so it can flag an
     auto-captured, still-unconfirmed external application distinctly
-    from an ordinary `submitted_pending_outcome` one."""
+    from an ordinary `submitted_pending_outcome` one, and `lead_only_at`
+    (PB-052) so it can flag an unverified lead distinctly from a real
+    candidate ready for evaluation."""
     conn = connect()
     try:
         return conn.execute(
             "SELECT id, title, organisation, lifecycle_status, lifecycle_note, "
-            "selected_at, auto_captured_at FROM opportunities ORDER BY id"
+            "selected_at, auto_captured_at, lead_only_at FROM opportunities ORDER BY id"
         ).fetchall()
     finally:
         conn.close()
@@ -1456,30 +1533,70 @@ def fetch_latest_application(opportunity_id: int) -> tuple | None:
         conn.close()
 
 
-def fetch_graph_listing() -> str:
+_GRAPH_LISTING_DESCRIPTION_CHAR_LIMIT = 100
+
+
+def _truncate_for_listing(text: str) -> str:
+    if len(text) <= _GRAPH_LISTING_DESCRIPTION_CHAR_LIMIT:
+        return text
+    return text[:_GRAPH_LISTING_DESCRIPTION_CHAR_LIMIT].rstrip() + "... [truncated in this overview]"
+
+
+def fetch_graph_listing(full: bool = False) -> str:
+    """The shared read behind every agent's `list_evidence_graph` tool
+    (curator, evaluation, brief, drafting, outcome, scan, interview_prep).
+
+    PB-051: an unfiltered, untruncated dump of the whole graph grew to
+    ~55KB as real evidence accumulated - past whatever size limit the
+    tool-result mechanism allows, silently redirecting the output to a
+    file no agent session has any tool to read. 15 of one 47-opportunity
+    evaluation batch explicitly reported seeing only the first handful
+    of nodes and zero identity-core facts as a result - every gate that
+    depends on knowing who Ingolv actually is (location, work
+    authorization, everything) was blind, not just under-informed.
+
+    Default (`full=False`, used by every agent except curator): only
+    `approved`/`provisional` nodes and edges, and only `is_current`
+    identity facts - the tier every agent's own instructions already
+    say is the only real evidence anyway, so dropping `proposed`/
+    `rejected`/superseded rows here loses nothing they were supposed to
+    rely on. `full=True` (curator only, which genuinely needs to see
+    `proposed`/`rejected` rows to avoid re-proposing a duplicate or
+    missing a correction) keeps every status.
+
+    Every description is truncated to a plain, conservative length
+    regardless of `full` - descriptions, not row count, drove most of
+    the actual byte total, and no agent here needs a node's complete
+    text just to know it exists and roughly what it says; the node's
+    own id is always shown, so a genuine need for the exact original
+    text is a data question, not something this overview has to carry."""
     conn = connect()
     try:
-        nodes = conn.execute(
-            "SELECT id, node_type, quality_tag, status, description "
-            "FROM evidence_nodes ORDER BY id"
-        ).fetchall()
-        edges = conn.execute(
+        node_query = "SELECT id, node_type, quality_tag, status, description FROM evidence_nodes"
+        edge_query = (
             "SELECT id, source_node_id, target_node_id, edge_type, quality_tag, status "
-            "FROM evidence_edges ORDER BY id"
-        ).fetchall()
-        facts = conn.execute(
-            "SELECT id, key, value, status, is_current FROM identity_core ORDER BY id"
-        ).fetchall()
+            "FROM evidence_edges"
+        )
+        fact_query = "SELECT id, key, value, status, is_current FROM identity_core"
+        if not full:
+            node_query += " WHERE status IN ('approved', 'provisional')"
+            edge_query += " WHERE status IN ('approved', 'provisional')"
+            fact_query += " WHERE is_current = 1"
+        nodes = conn.execute(node_query + " ORDER BY id").fetchall()
+        edges = conn.execute(edge_query + " ORDER BY id").fetchall()
+        facts = conn.execute(fact_query + " ORDER BY id").fetchall()
     finally:
         conn.close()
 
-    lines = ["EVIDENCE NODES:"]
+    node_header = "EVIDENCE NODES:" if full else "EVIDENCE NODES (approved/provisional only):"
+    lines = [node_header]
     lines += [
-        f"#{node_id} [{status}] [{node_type}/{quality_tag}] {description}"
+        f"#{node_id} [{status}] [{node_type}/{quality_tag}] {_truncate_for_listing(description)}"
         for node_id, node_type, quality_tag, status, description in nodes
     ] or ["(none yet)"]
 
-    lines.append("\nEVIDENCE EDGES:")
+    edge_header = "\nEVIDENCE EDGES:" if full else "\nEVIDENCE EDGES (approved/provisional only):"
+    lines.append(edge_header)
     lines += [
         f"#{edge_id} [{status}] {source_id} --[{edge_type}/{quality_tag}]--> {target_id}"
         for edge_id, source_id, target_id, edge_type, quality_tag, status in edges
@@ -1488,7 +1605,7 @@ def fetch_graph_listing() -> str:
     lines.append("\nIDENTITY CORE:")
     lines += [
         f"#{fact_id} [{status}, {'current' if is_current else 'not current'}] "
-        f"{key}: {value}"
+        f"{key}: {_truncate_for_listing(value)}"
         for fact_id, key, value, status, is_current in facts
     ] or ["(none yet)"]
 

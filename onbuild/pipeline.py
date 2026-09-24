@@ -34,6 +34,7 @@ class OpportunitySnapshot:
     lifecycle_note: str | None
     selected_at: str | None
     auto_captured_at: str | None
+    lead_only_at: str | None
     evaluation_id: int | None
     evaluation_decision: str | None
     brief_id: int | None
@@ -62,7 +63,7 @@ def _fetch_snapshot(opportunity_id: int) -> OpportunitySnapshot:
     opp_id, title, organisation, _raw_text, _source, _track = opportunity
 
     all_opps = {row[0]: row for row in evidence_ops.fetch_all_opportunities()}
-    _id, _title, _org, lifecycle_status, lifecycle_note, selected_at, auto_captured_at = all_opps[opportunity_id]
+    _id, _title, _org, lifecycle_status, lifecycle_note, selected_at, auto_captured_at, lead_only_at = all_opps[opportunity_id]
 
     evaluation = evidence_ops.fetch_latest_evaluation_decision(opportunity_id)
     evaluation_id, evaluation_decision = evaluation if evaluation else (None, None)
@@ -90,6 +91,7 @@ def _fetch_snapshot(opportunity_id: int) -> OpportunitySnapshot:
         lifecycle_note=lifecycle_note,
         selected_at=selected_at,
         auto_captured_at=auto_captured_at,
+        lead_only_at=lead_only_at,
         evaluation_id=evaluation_id,
         evaluation_decision=evaluation_decision,
         brief_id=brief_id,
@@ -290,6 +292,19 @@ STAGES: list[Stage] = [
         gate="onbuild.selection",
         matches=lambda s: s.brief_id is None and s.evaluation_id is not None and s.evaluation_decision == "admit",
         next_action=lambda s: "See onbuild.overview for ranking. Run onbuild.selection to choose it.",
+    ),
+    Stage(
+        key="unverified_lead",
+        description="Only a mention was found - not the real posting.",
+        agent=None,
+        gate=None,
+        matches=lambda s: s.lead_only_at is not None,
+        next_action=lambda s: (
+            f"Not ready for evaluation - only a mention was found (see this "
+            f"opportunity's own raw_text/source for the link). Find the real "
+            f"posting, then run onbuild.agents.evaluation --opportunity-id "
+            f"{s.opportunity_id} --posting-file <file> --track <track>."
+        ),
     ),
     Stage(
         key="candidate",

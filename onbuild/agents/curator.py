@@ -105,7 +105,7 @@ async def propose_identity_fact(args: dict) -> dict:
     {},
 )
 async def list_evidence_graph(args: dict) -> dict:
-    return {"content": [{"type": "text", "text": evidence_ops.fetch_graph_listing()}]}
+    return {"content": [{"type": "text", "text": evidence_ops.fetch_graph_listing(full=True)}]}
 
 
 @tool(

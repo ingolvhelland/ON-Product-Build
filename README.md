@@ -108,7 +108,14 @@ access was, given the different safety stakes of an agent that could
 click something on a live application system); no recurring schedule for
 the live mailbox scan (PB-030 - it runs a single pass on demand today;
 unattended scheduling is a standing-configuration choice not yet made);
-no learning loop yet feeds later-discovered application-stage information
+`onbuild.agents.evaluation`'s `--posting-file` flag upgrades an
+unverified lead (PB-052) by hand, one at a time - no automatic re-check
+of a lead later, on the same "surface-only" reasoning as the rest of
+this orchestration; no way yet for an agent to fetch one evidence
+node's full, untruncated text on demand (PB-051's fix truncates every
+description in `list_evidence_graph`'s listing - a real, more scalable
+fix than a fixed size budget, but a bigger change than this pass took
+on); no learning loop yet feeds later-discovered application-stage information
 back into evaluation calibration.
 
 ## Setup
@@ -134,6 +141,7 @@ python -m onbuild.agents.baseline_cv --out cv.txt    # generate the baseline CV 
 python -m onbuild.agents.evaluation path/to/posting.txt \
     --title "..." --organisation "..." --track "Primary" [--deadline YYYY-MM-DD]  # add and evaluate a new opportunity
 python -m onbuild.agents.evaluation --opportunity-id <id> --track "Primary"  # evaluate an existing candidate (e.g. one onbuild.agents.scan found)
+python -m onbuild.agents.evaluation --opportunity-id <id> --posting-file f.txt --track "Primary"  # attach a real posting to an unverified lead, then evaluate
 python -m onbuild.admission                          # record admit/reject on evaluated opportunities
 python -m onbuild.selection                          # choose which admitted opportunities to actively pursue right now
 python -m onbuild.agents.brief <opportunity_id>       # write a strategic brief for an admitted AND selected opportunity
@@ -246,8 +254,11 @@ clear. A mismatch here is corrected via `onbuild.outcome_decision
 multiple matches, before holding the message, it tries two things in
 order: `scan.extract_from_message` (PB-042 - many companies ask
 permission to send future-opportunity emails on application, and those
-land in this same inbox; a real posting found this way becomes a
-candidate opportunity), then, if that finds nothing,
+land in this same inbox; real posting content found this way becomes a
+candidate opportunity, but a bare stub - a LinkedIn digest's title,
+company and link with no actual posting content, PB-052 - is recorded
+as an unverified lead instead, never sent to evaluation), then, if that
+finds nothing,
 `outcome.detect_external_application` (PB-050 - the message might
 instead be a receipt for an application Ingolv sent entirely outside
 this system, like a LinkedIn "Easy Apply" or a direct email; if so it's
@@ -278,15 +289,21 @@ highest-`fit_score` evaluations recorded so far (any origin - manual
 entry counts exactly as much as a scan) as live context for its own
 search queries, weighted toward what has already scored well without
 narrowing only to that, then searches the open web and every active
-`scan_sources` entry directly. Every distinct posting becomes a plain
-`opportunities` row - deduplicated by normalized title+organisation
-against everything already tracked, no matter how it got there - with
-no evaluation and no track assigned; track stays a human/evaluation-time
-call (`onbuild.agents.evaluation --track`), never a discovery-time guess.
-Not every configured source renders usefully through `WebFetch` (a
-login-gated or JavaScript-heavy job board may return nothing) - when
-that happens the agent says so plainly rather than inventing content,
-and keeps going. `scan_sources` (also PB-042) manages the job-board URL
+`scan_sources` entry directly. Every distinct posting is verified
+before it's recorded (PB-052): a search result or a job board's own
+listing page is only ever a lead - a title, an organisation, a link -
+until `WebFetch` on the specific posting's own URL actually confirms
+real content. A verified lead becomes a plain `opportunities` row,
+deduplicated by normalized title+organisation against everything
+already tracked, no matter how it got there - with no evaluation and no
+track assigned; track stays a human/evaluation-time call
+(`onbuild.agents.evaluation --track`), never a discovery-time guess. A
+lead that can't be verified (`WebFetch` fails, hits a login wall, or
+only returns a listing page) is recorded as an unverified lead instead
+- flagged via `lead_only_at`, its own distinct stage in
+`onbuild.pipeline`, never sent to evaluation until the real posting is
+found and attached by hand (`onbuild.agents.evaluation --opportunity-id
+--posting-file`). `scan_sources` (also PB-042) manages the job-board URL
 list this checks - a plain database table, not a config file, so
 sources can be added, disabled, or re-enabled without touching code.
 

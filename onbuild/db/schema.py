@@ -131,6 +131,15 @@ CREATE TABLE IF NOT EXISTS identity_core (
 -- it's real (from then on indistinguishable from a manually-registered
 -- external application), or the opportunity is closed with a note if
 -- it turns out to have been a misread.
+-- `lead_only_at` (PB-052) marks an opportunity the scanning agent could
+-- only confirm as a MENTION of a role - a job-alert stub, a search
+-- snippet, "N school alumni" and a link - never the real posting itself
+-- (WebFetch on the link failed, returned a listing page rather than the
+-- posting, or the entry point doing the finding has no web access at
+-- all, like `onbuild.mailbox`'s digest path). `raw_text` for one of
+-- these is deliberately NOT a real posting - `onbuild.agents.evaluation`
+-- refuses to run against it. Cleared once the real posting is found and
+-- attached (`onbuild.agents.evaluation --opportunity-id --posting-file`).
 CREATE TABLE IF NOT EXISTS opportunities (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
@@ -143,6 +152,7 @@ CREATE TABLE IF NOT EXISTS opportunities (
     lifecycle_note TEXT,
     selected_at TEXT,                   -- ISO datetime (PB-039); NULL until chosen from the admitted-ranked list
     auto_captured_at TEXT,              -- ISO datetime (PB-050); NULL unless auto-captured and still unconfirmed
+    lead_only_at TEXT,                  -- ISO datetime (PB-052); NULL unless only a mention was found, not the real posting
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -448,6 +458,7 @@ _COLUMN_MIGRATIONS = {
         ("lifecycle_note", "TEXT"),
         ("selected_at", "TEXT"),
         ("auto_captured_at", "TEXT"),
+        ("lead_only_at", "TEXT"),
     ],
     "applications": [
         ("submitted_at", "TEXT"),

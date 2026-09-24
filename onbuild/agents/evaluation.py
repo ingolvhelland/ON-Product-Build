@@ -53,15 +53,14 @@ _CURRENT_OPPORTUNITY_ID: int | None = None
 
 @tool(
     "list_evidence_graph",
-    "List everything currently recorded: every evidence node (any status), "
-    "every edge (any status), and every identity-core fact, each labelled "
-    "with its status. Read-only. Call this once before reasoning about fit. "
-    "Only treat 'approved' or 'provisional' items as real evidence - "
-    "'proposed' and 'rejected' items are visible but must not be treated as "
-    "established fact. Identity facts also show current/not current - a key can have "
-    "more than one approved row when a fact was revised; only the "
-    "'current' one is today's fact, an older 'not current' row for the "
-    "same key was superseded, not contradicted or rejected.",
+    "List currently approved/provisional evidence nodes and edges, plus "
+    "every current identity-core fact. Read-only. Call this once before "
+    "reasoning about fit. Proposed and rejected items, and identity facts "
+    "already superseded, are intentionally left out of this view (PB-051 "
+    "- keeps the listing a manageable size as the graph grows; none of it "
+    "was ever real evidence for your purposes anyway). Descriptions are "
+    "shown in short form, not their full original text - that's enough "
+    "to know what a node claims without needing to quote it exactly.",
     {},
 )
 async def list_evidence_graph(args: dict) -> dict:
@@ -328,6 +327,13 @@ def main() -> None:
         help="Evaluate an existing opportunity instead of adding a new one from a file "
         "- its own raw_text/source are read from the database.",
     )
+    parser.add_argument(
+        "--posting-file", type=Path, default=None,
+        help="With --opportunity-id: attach the real posting text found by hand, "
+        "overwriting whatever raw_text is currently stored, and clear the "
+        "opportunity's lead-only flag if it has one (PB-052) - the actual "
+        "posting was found, so it's no longer just a lead.",
+    )
     parser.add_argument("--title", default=None)
     parser.add_argument("--organisation", default=None)
     parser.add_argument("--source", default="manual entry")
@@ -349,6 +355,19 @@ def main() -> None:
         if opportunity is None:
             parser.error(f"No opportunity #{args.opportunity_id}")
         opp_id, title, organisation, raw_text, source, _existing_track = opportunity
+
+        if args.posting_file is not None:
+            raw_text = args.posting_file.read_text()
+            evidence_ops.attach_verified_posting(opp_id, raw_text, args.source if args.source != "manual entry" else None)
+            print(f"Opportunity #{opp_id}: real posting attached, lead-only flag cleared if it had one.")
+        elif evidence_ops.fetch_lead_status(opp_id) is not None:
+            parser.error(
+                f"Opportunity #{opp_id} ('{title}') is only an unverified lead (PB-052) "
+                f"- no real posting was ever found for it, only a mention. Find the "
+                f"actual listing and re-run with --posting-file <file> to attach it "
+                f"before evaluating."
+            )
+
         evidence_ops.update_opportunity_track(opp_id, args.track)
         print(f"Opportunity #{opp_id} ('{title}'): track set to '{args.track}'.")
         asyncio.run(evaluate_opportunity(opp_id, raw_text, source, args.track))

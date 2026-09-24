@@ -183,13 +183,13 @@ async def save_company_field_position(args: dict) -> dict:
 
 @tool(
     "list_evidence_graph",
-    "List everything currently recorded: every evidence node (any status), "
-    "every edge (any status), and every identity-core fact, each labelled "
-    "with its status. Read-only. Only treat 'approved' or 'provisional' "
-    "items as real evidence. Identity facts also show current/not current - a key can "
-    "have more than one approved row when a fact was revised; only the "
-    "'current' one is today's fact, an older 'not current' row for the "
-    "same key was superseded, not contradicted or rejected.",
+    "List currently approved/provisional evidence nodes and edges, plus "
+    "every current identity-core fact. Read-only. Proposed and rejected "
+    "items, and identity facts already superseded, are intentionally "
+    "left out of this view (PB-051 - keeps the listing a manageable size "
+    "as the graph grows; none of it was ever real evidence for your "
+    "purposes anyway). Descriptions are shown in short form, not their "
+    "full original text.",
     {},
 )
 async def list_evidence_graph(args: dict) -> dict:
