@@ -60,7 +60,7 @@ def pending_decisions(conn: sqlite3.Connection) -> list[tuple]:
     return conn.execute(
         """
         SELECT a.id, a.opportunity_id, o.title, o.organisation, o.track,
-               o.application_deadline, a.application_format_assessment,
+               o.application_deadline, o.source, a.application_format_assessment,
                a.tailored_cv, a.cover_letter_or_message, a.application_form_data,
                a.question_responses, a.portfolio_recommendation, a.human_decision
         FROM applications a
@@ -91,6 +91,7 @@ def main() -> None:
             organisation,
             track,
             application_deadline,
+            source,
             application_format_assessment,
             tailored_cv,
             cover_letter_or_message,
@@ -106,6 +107,7 @@ def main() -> None:
                 f"{organisation or '(no organisation)'} [{track}]{deadline_tag}{paused_tag} ==="
             )
             print(f"Application #{app_id}")
+            print(f"Posting: {source or '(no source recorded)'}")
             print(f"\nFormat assessment: {application_format_assessment}")
             print(f"\nTailored CV:\n{tailored_cv}")
             print(f"\nCover letter / message:\n{cover_letter_or_message}")

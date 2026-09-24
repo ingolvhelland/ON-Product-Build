@@ -59,7 +59,7 @@ def pending_decisions(conn: sqlite3.Connection) -> list[tuple]:
     return conn.execute(
         """
         SELECT b.id, b.opportunity_id, o.title, o.organisation, o.track,
-               o.application_deadline, b.company_profile, b.field_positioning,
+               o.application_deadline, o.source, b.company_profile, b.field_positioning,
                b.position_fit, b.candidacy_fit_summary, b.strategic_approach,
                b.human_decision
         FROM briefs b
@@ -90,6 +90,7 @@ def main() -> None:
             organisation,
             track,
             application_deadline,
+            source,
             company_profile,
             field_positioning,
             position_fit,
@@ -104,6 +105,7 @@ def main() -> None:
                 f"{organisation or '(no organisation)'} [{track}]{deadline_tag}{paused_tag} ==="
             )
             print(f"Brief #{brief_id}")
+            print(f"Posting: {source or '(no source recorded)'}")
             print(f"\nCompany profile: {company_profile}")
             print(f"\nField positioning: {field_positioning}")
             print(f"\nPosition fit: {position_fit}")
