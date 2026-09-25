@@ -143,13 +143,13 @@ python -m onbuild.agents.evaluation path/to/posting.txt \
 python -m onbuild.agents.evaluation --opportunity-id <id> --track "Primary"  # evaluate an existing candidate (e.g. one onbuild.agents.scan found)
 python -m onbuild.agents.evaluation --opportunity-id <id> --posting-file f.txt --track "Primary"  # attach a real posting to an unverified lead, then evaluate
 python -m onbuild.admission                          # record admit/reject on evaluated opportunities
-python -m onbuild.selection                          # choose which admitted opportunities to actively pursue right now
+python -m onbuild.selection                          # select / defer / reject (closes) admitted opportunities
 python -m onbuild.agents.brief <opportunity_id>       # write a strategic brief for an admitted AND selected opportunity
 python -m onbuild.brief_decision                     # record continue/revise/pause/drop on a brief
 python -m onbuild.agents.drafting <opportunity_id> \
     [--captured-application path/to/captured.txt]    # draft application material for a continued brief
 python -m onbuild.application_decision              # record approve/revise/pause/drop on a draft
-python -m onbuild.submission_confirmation           # confirm an approved draft was actually sent
+python -m onbuild.submission_confirmation           # confirm an approved draft was sent, or close it if you won't send it
 python -m onbuild.mailbox                           # scan the job-search inbox for new mail, match, and classify
 python -m onbuild.agents.outcome <opportunity_id> path/to/message.txt  # classify one message manually (no live match found, or testing)
 python -m onbuild.outcome_decision                  # resolve an 'unclear' classification or a pre-PB-040 legacy outcome

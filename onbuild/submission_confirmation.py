@@ -23,6 +23,7 @@ Skipped items stay unconfirmed; re-run the tool anytime to continue.
 
 import sqlite3
 
+from onbuild.db import evidence_ops
 from onbuild.db.schema import DB_PATH
 
 
@@ -34,10 +35,12 @@ def _connect() -> sqlite3.Connection:
 
 def _prompt() -> str:
     while True:
-        choice = input("Actually submitted? [y]es / [s]kip / [q]uit > ").strip().lower()
-        if choice in ("y", "s", "q"):
+        choice = input(
+            "Actually submitted? [y]es / [n]o, won't send (close) / [s]kip / [q]uit > "
+        ).strip().lower()
+        if choice in ("y", "n", "s", "q"):
             return choice
-        print("Please enter y, s, or q.")
+        print("Please enter y, n, s, or q.")
 
 
 def pending_confirmations(conn: sqlite3.Connection) -> list[tuple]:
@@ -62,7 +65,7 @@ def main() -> None:
             print("No approved applications awaiting submission confirmation.")
             return
 
-        confirmed = skipped = 0
+        confirmed = skipped = closed = 0
         for application_id, opportunity_id, title, organisation, track in rows:
             print(
                 f"\n=== Opportunity #{opportunity_id}: {title} — "
@@ -85,10 +88,17 @@ def main() -> None:
                 )
                 conn.commit()
                 confirmed += 1
+            elif choice == "n":
+                note = input("Note (optional, why not sending): ").strip()
+                evidence_ops.close_opportunity(
+                    opportunity_id,
+                    f"Approved but not sent: {note}" if note else "Approved but not sent",
+                )
+                closed += 1
             else:
                 skipped += 1
 
-        print(f"\n=== Summary ===\nConfirmed: {confirmed}\nSkipped: {skipped}")
+        print(f"\n=== Summary ===\nConfirmed: {confirmed}\nClosed (not sent): {closed}\nSkipped: {skipped}")
         print(
             "\nSkipped items remain unconfirmed - re-run this tool anytime "
             "to continue."

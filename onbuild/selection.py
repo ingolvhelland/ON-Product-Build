@@ -22,7 +22,7 @@ Run it directly:
 
     python -m onbuild.selection
 
-Skipped items stay unselected; re-run the tool anytime to continue.
+Deferred items stay unselected; rejected ones are closed (`close_opportunity`); re-run the tool anytime to continue.
 """
 
 from onbuild.db import evidence_ops
@@ -30,10 +30,12 @@ from onbuild.db import evidence_ops
 
 def _prompt() -> str:
     while True:
-        choice = input("[s]elect / [k]eep for later / [q]uit > ").strip().lower()
-        if choice in ("s", "k", "q"):
+        choice = input(
+            "[s]elect / [d]efer / [r]eject / [q]uit > "
+        ).strip().lower()
+        if choice in ("s", "d", "r", "q"):
             return choice
-        print("Please enter s, k, or q.")
+        print("Please enter s, d, r, or q.")
 
 
 def main() -> None:
@@ -42,7 +44,7 @@ def main() -> None:
         print("No admitted opportunities awaiting selection.")
         return
 
-    selected = skipped = 0
+    selected = deferred = rejected = 0
     for (
         opp_id,
         title,
@@ -69,11 +71,17 @@ def main() -> None:
         if choice == "s":
             evidence_ops.mark_opportunity_selected(opp_id)
             selected += 1
+        elif choice == "r":
+            note = input("Note (optional, why rejecting): ").strip()
+            evidence_ops.close_opportunity(
+                opp_id, f"Rejected at selection: {note}" if note else "Rejected at selection"
+            )
+            rejected += 1
         else:
-            skipped += 1
+            deferred += 1
 
-    print(f"\n=== Summary ===\nSelected: {selected}\nSkipped: {skipped}")
-    print("\nSkipped items remain unselected - re-run this tool anytime to continue.")
+    print(f"\n=== Summary ===\nSelected: {selected}\nDeferred: {deferred}\nRejected: {rejected}")
+    print("\nDeferred items remain unselected - re-run this tool anytime to continue.")
 
 
 if __name__ == "__main__":
